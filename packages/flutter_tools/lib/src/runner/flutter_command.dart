@@ -129,6 +129,7 @@ abstract final class FlutterOptions {
   static const kDartObfuscationOption = 'obfuscate';
   static const kDartDefinesOption = 'dart-define';
   static const kDartDefineFromFileOption = 'dart-define-from-file';
+  static const kWebDefinesOption = 'web-define';
   static const kPerformanceMeasurementFile = 'performance-measurement-file';
   static const kDeviceUser = 'device-user';
   static const kDeviceTimeout = 'device-timeout';
@@ -150,6 +151,8 @@ abstract final class FlutterOptions {
   static const kWebWasmFlag = 'wasm';
   static const kWebExperimentalHotReload = 'web-experimental-hot-reload';
   static const kEnableImpeller = 'enable-impeller';
+  static const kCodesignIdentity = 'codesign-identity';
+  static const kCodesign = 'codesign';
 }
 
 /// flutter command categories for usage.
@@ -281,7 +284,6 @@ abstract class FlutterCommand extends Command<void> {
     );
     argParser.addOption(
       'web-hostname',
-      defaultsTo: 'localhost',
       help:
           'The hostname that the web server will use to resolve an IP to serve '
           'from. The unresolved hostname is used to launch Chrome when using '
@@ -372,7 +374,9 @@ abstract class FlutterCommand extends Command<void> {
     );
     argParser.addFlag(
       FlutterOptions.kWebExperimentalHotReload,
-      help: 'Enables new module format that supports hot reload.',
+      help:
+          '(deprecated; will be removed in a future release) '
+          'Enables new module format that supports hot reload.',
       defaultsTo: true,
       hide: !verboseHelp,
     );
@@ -391,6 +395,28 @@ abstract class FlutterCommand extends Command<void> {
           'Multiple flags can be passed by repeating "--${FlutterOptions.kWebBrowserFlag}" multiple times.',
       valueHelp: '--foo=bar',
       hide: !verboseHelp,
+    );
+    argParser.addFlag(
+      'cross-origin-isolation',
+      help:
+          'Adds the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy '
+          'headers to the web server. These headers are required for using APIs like '
+          'SharedArrayBuffer. This is on by default for the "skwasm" web renderer, '
+          'and this flag can be used to override the default. To disable this for the '
+          'skwasm renderer, use "--no-cross-origin-isolation".',
+      hide: !verboseHelp,
+    );
+    usesBaseHrefOption();
+  }
+
+  void usesBaseHrefOption() {
+    argParser.addOption(
+      'base-href',
+      help:
+          'Overrides the href attribute of the <base> tag in web/index.html. '
+          'No change is made to web/index.html file if this flag is not provided. '
+          'The value must start and end with "/". '
+          'For more information: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base',
     );
   }
 
@@ -548,23 +574,28 @@ abstract class FlutterCommand extends Command<void> {
     );
   }
 
-  void addDevToolsOptions({required bool verboseHelp}) {
-    argParser.addFlag(
-      kEnableDevTools,
-      hide: !verboseHelp,
-      defaultsTo: true,
-      help:
-          'Enable (or disable, with "--no-$kEnableDevTools") the launching of the '
-          'Flutter DevTools debugger and profiler. '
-          'If "--no-$kEnableDevTools" is specified, "--$kDevToolsServerAddress" is ignored.',
-    );
+  void addDevToolsOptions({required bool verboseHelp, bool includeEnableDevTools = true}) {
+    if (includeEnableDevTools) {
+      argParser.addFlag(
+        kEnableDevTools,
+        hide: !verboseHelp,
+        defaultsTo: true,
+        help:
+            'Enable (or disable, with "--no-$kEnableDevTools") the launching of the '
+            'Flutter DevTools debugger and profiler. '
+            'If "--no-$kEnableDevTools" is specified, "--$kDevToolsServerAddress" is ignored.',
+      );
+    }
+    final ignoredMessage = includeEnableDevTools
+        ? ' Ignored if "--no-$kEnableDevTools" is specified.'
+        : '';
     argParser.addOption(
       kDevToolsServerAddress,
       hide: !verboseHelp,
       help:
           'When this value is provided, the Flutter tool will not spin up a '
           'new DevTools server instance, and will instead use the one provided '
-          'at the given address. Ignored if "--no-$kEnableDevTools" is specified.',
+          'at the given address.$ignoredMessage',
     );
   }
 
@@ -596,6 +627,7 @@ abstract class FlutterCommand extends Command<void> {
     );
   }
 
+<<<<<<< HEAD
   late final bool enableDds = () {
     var ddsEnabled = false;
     if (argResults?.wasParsed('disable-dds') ?? false) {
@@ -619,6 +651,9 @@ abstract class FlutterCommand extends Command<void> {
     }
     return ddsEnabled;
   }();
+=======
+  late final bool enableDds = boolArg('dds');
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 
   bool get _hostVmServicePortProvided =>
       (argResults?.wasParsed(vmServicePortOption) ?? false) ||
@@ -757,6 +792,7 @@ abstract class FlutterCommand extends Command<void> {
   void usesDartDefineOption() {
     argParser.addMultiOption(
       FlutterOptions.kDartDefinesOption,
+      abbr: 'D',
       aliases: <String>[kDartDefines], // supported for historical reasons
       help:
           'Additional key-value pairs that will be available as constants '
@@ -767,6 +803,21 @@ abstract class FlutterCommand extends Command<void> {
       splitCommas: false,
     );
     _usesDartDefineFromFileOption();
+  }
+
+  void usesWebDefineOption() {
+    argParser.addMultiOption(
+      FlutterOptions.kWebDefinesOption,
+      help:
+          'Additional key-value pairs that will be available as template variables '
+          'in web/index.html and web/flutter_bootstrap.js files during development and build.\n'
+          'Variables are replaced in the format {{VARIABLE_NAME}}.\n'
+          'Multiple defines can be passed by repeating "--${FlutterOptions.kWebDefinesOption}" multiple times.\n'
+          'If a template contains a variable placeholder but no corresponding "--web-define" is provided, '
+          'it will warn that you have an unhandled variable.',
+      valueHelp: 'API_URL=https://api.example.com',
+      splitCommas: false,
+    );
   }
 
   void _usesDartDefineFromFileOption() {
@@ -1194,6 +1245,22 @@ abstract class FlutterCommand extends Command<void> {
     );
   }
 
+  void usesDarwinCodeSignXCFrameworksOption() {
+    argParser.addFlag(
+      FlutterOptions.kCodesign,
+      defaultsTo: true,
+      help: 'Whether to code-sign XCFrameworks.',
+    );
+    argParser.addOption(
+      FlutterOptions.kCodesignIdentity,
+      help:
+          'The identity to use for code-signing XCFrameworks. If an identity is not provided and '
+          '"${FlutterOptions.kCodesign}" is enabled, a code signing identity will be selected '
+          "automatically from the Flutter app's Xcode project settings or Flutter config. To see "
+          'a list of valid identities run "security find-identity -p codesigning -v".',
+    );
+  }
+
   void usesTrackWidgetCreation({bool hasEffect = true, required bool verboseHelp}) {
     argParser.addFlag(
       'track-widget-creation',
@@ -1278,6 +1345,14 @@ abstract class FlutterCommand extends Command<void> {
       negatable: false,
       help: 'Outputs in a machine readable structured JSON format.',
       hide: !verboseHelp,
+    );
+  }
+
+  void addEnableHcppFlag({required bool verboseHelp}) {
+    argParser.addFlag(
+      'enable-hcpp',
+      hide: !verboseHelp,
+      help: 'Whether to enable the HCPP platform view mode on the Impeller rendering backend.',
     );
   }
 
@@ -1625,10 +1700,35 @@ abstract class FlutterCommand extends Command<void> {
     });
 
     if (argParser.options.containsKey(FlutterOptions.kDartDefinesOption)) {
-      dartDefines.addAll(stringsArg(FlutterOptions.kDartDefinesOption));
+      final Iterable<String> defines = stringsArg(
+        FlutterOptions.kDartDefinesOption,
+      ).where((string) => string.isNotEmpty);
+      dartDefines.addAll(defines);
     }
 
     return dartDefines;
+  }
+
+  Map<String, String> extractWebDefines() {
+    final webDefines = <String, String>{};
+
+    if (argParser.options.containsKey(FlutterOptions.kWebDefinesOption)) {
+      final List<String> defines = stringsArg(FlutterOptions.kWebDefinesOption);
+      for (final define in defines) {
+        final int separatorIndex = define.indexOf('=');
+        if (separatorIndex == -1 || separatorIndex == 0) {
+          throwToolExit(
+            'Invalid web-define format: $define\n'
+            'Expected format: KEY=VALUE (e.g., API_URL=https://api.example.com)',
+          );
+        }
+        final String key = define.substring(0, separatorIndex);
+        final String value = define.substring(separatorIndex + 1);
+        webDefines[key] = value;
+      }
+    }
+
+    return webDefines;
   }
 
   Map<String, Object?> extractDartDefineConfigJsonMap() {
@@ -1968,7 +2068,7 @@ abstract class FlutterCommand extends Command<void> {
   /// If [includeDevicesUnsupportedByProject] is true, the tool does not filter
   /// the list by the current project support list.
   Future<Device?> findTargetDevice({bool includeDevicesUnsupportedByProject = false}) async {
-    List<Device>? deviceList = await findAllTargetDevices(
+    final List<Device>? deviceList = await findAllTargetDevices(
       includeDevicesUnsupportedByProject: includeDevicesUnsupportedByProject,
     );
     if (deviceList == null) {
@@ -1976,9 +2076,9 @@ abstract class FlutterCommand extends Command<void> {
     }
     if (deviceList.length > 1) {
       globals.printStatus(globals.userMessages.flutterSpecifyDevice);
-      deviceList = await globals.deviceManager!.getAllDevices();
+      final List<Device> allDevices = await globals.deviceManager!.getAllDevices();
       globals.printStatus('');
-      await Device.printDevices(deviceList, globals.logger);
+      await Device.printDevices(allDevices, globals.logger);
       return null;
     }
     return deviceList.single;
@@ -1988,7 +2088,7 @@ abstract class FlutterCommand extends Command<void> {
   @mustCallSuper
   Future<void> validateCommand() async {
     if (_requiresPubspecYaml && globalResults?.wasParsed('packages') != true) {
-      // Don't expect a pubspec.yaml file if the user passed in an explicit .packages file path.
+      // Don't expect a pubspec.yaml file if the user passed in an explicit package_config.json file path.
 
       // If there is no pubspec in the current directory, look in the parent
       // until one can be found.
@@ -2109,6 +2209,7 @@ DevelopmentArtifact? artifactFromTargetPlatform(TargetPlatform targetPlatform) {
       return null;
     case TargetPlatform.linux_x64:
     case TargetPlatform.linux_arm64:
+    case TargetPlatform.linux_riscv64:
       if (featureFlags.isLinuxEnabled) {
         return DevelopmentArtifact.linux;
       }

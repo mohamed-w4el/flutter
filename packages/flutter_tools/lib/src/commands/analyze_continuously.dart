@@ -4,9 +4,10 @@
 
 import '../base/common.dart';
 import '../base/file_system.dart';
-import '../base/io.dart';
 import '../base/logger.dart';
+import '../base/process.dart';
 import '../dart/analysis.dart';
+import '../globals.dart' as globals;
 import 'analyze_base.dart';
 
 class AnalyzeContinuously extends AnalyzeBase {
@@ -23,11 +24,11 @@ class AnalyzeContinuously extends AnalyzeBase {
   }) : super(repoPackages: repoPackages);
 
   String? analysisTarget;
-  var firstAnalysis = true;
-  var analyzedPaths = <String>{};
-  var analysisErrors = <String, List<AnalysisError>>{};
+  bool firstAnalysis = true;
+  Set<String> analyzedPaths = <String>{};
+  Map<String, List<AnalysisError>> analysisErrors = <String, List<AnalysisError>>{};
   final analysisTimer = Stopwatch();
-  var lastErrorCount = 0;
+  int lastErrorCount = 0;
   Status? analysisStatus;
 
   @override
@@ -128,7 +129,7 @@ class AnalyzeContinuously extends AnalyzeBase {
       if (firstAnalysis && isBenchmarking) {
         writeBenchmark(analysisTimer, issueCount);
         server.dispose().whenComplete(() {
-          exit(issueCount > 0 ? 1 : 0);
+          exitWithHooks(issueCount > 0 ? 1 : 0, shutdownHooks: globals.shutdownHooks);
         });
       }
 
@@ -137,8 +138,6 @@ class AnalyzeContinuously extends AnalyzeBase {
   }
 
   void _handleAnalysisErrors(FileAnalysisErrors fileErrors) {
-    fileErrors.errors.removeWhere((AnalysisError error) => error.type == 'TODO');
-
     analyzedPaths.add(fileErrors.file);
     analysisErrors[fileErrors.file] = fileErrors.errors;
   }

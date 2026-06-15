@@ -12,7 +12,7 @@ buildscript {
     }
 
     dependencies {
-        classpath("com.android.tools.build:gradle:8.2.1")
+        classpath("com.android.tools.build:gradle:8.11.0")
     }
 }
 
@@ -37,8 +37,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     defaultConfig {
@@ -55,7 +55,7 @@ android {
 
         api("androidx.test:runner:1.2+")
         api("androidx.test:rules:1.2+")
-        api("androidx.test.espresso:espresso-core:3.2+")
+        api("androidx.test.espresso:espresso-core:3.3+")
 
         implementation("com.google.guava:guava:28.1-android")
     }

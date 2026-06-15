@@ -37,6 +37,7 @@ class FakeCommand {
     this.exception,
     this.outputFollowsExit = false,
     this.processStartMode,
+    this.process,
   });
 
   /// The exact commands that must be matched for this [FakeCommand] to be
@@ -113,6 +114,11 @@ class FakeCommand {
   final bool outputFollowsExit;
 
   final io.ProcessStartMode? processStartMode;
+
+  /// The fake process to be returned by the process manager.
+  ///
+  /// If this is null, a default [FakeProcess] will be created.
+  final FakeProcess? process;
 
   void _matches(
     List<String> command,
@@ -205,6 +211,7 @@ class FakeProcess implements io.Process {
     } else {
       this.stdout = Stream<List<int>>.value(_stdout);
     }
+    this.exitCode.then((_) => this.stdin.close());
   }
 
   /// The process exit code.
@@ -329,6 +336,10 @@ abstract class FakeProcessManager implements ProcessManager {
     if (fakeCommand.onRun != null) {
       fakeCommand.onRun!(command);
     }
+    if (fakeCommand.process != null) {
+      return fakeCommand.process!;
+    }
+
     return FakeProcess(
       duration: fakeCommand.duration,
       exitCode: fakeCommand.exitCode,
@@ -420,7 +431,7 @@ abstract class FakeProcessManager implements ProcessManager {
   bool canRun(dynamic executable, {String? workingDirectory}) =>
       !excludedExecutables.contains(executable);
 
-  var excludedExecutables = <String>{};
+  Set<String> excludedExecutables = <String>{};
 
   @override
   bool killPid(int pid, [io.ProcessSignal signal = io.ProcessSignal.sigterm]) {

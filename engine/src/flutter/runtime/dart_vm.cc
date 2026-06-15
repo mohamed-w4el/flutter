@@ -19,6 +19,7 @@
 #include "flutter/runtime/dart_isolate.h"
 #include "flutter/runtime/dart_vm_initializer.h"
 #include "flutter/runtime/ptrace_check.h"
+#include "third_party/dart/runtime/bin/platform.h"
 #include "third_party/dart/runtime/include/bin/dart_io_api.h"
 #include "third_party/skia/include/core/SkExecutor.h"
 #include "third_party/tonic/converter/dart_converter.h"
@@ -177,7 +178,8 @@ bool DartVM::IsRunningPrecompiledCode() {
   return Dart_IsPrecompiledRuntime();
 }
 
-static std::vector<const char*> ProfilingFlags(bool enable_profiling) {
+static std::vector<const char*> ProfilingFlags(bool enable_profiling,
+                                               bool profile_startup) {
 // Disable Dart's built in profiler when building a debug build. This
 // works around a race condition that would sometimes stop a crash's
 // stack trace from being printed on Android.
@@ -189,7 +191,7 @@ static std::vector<const char*> ProfilingFlags(bool enable_profiling) {
   // the VM enables the same by default. In either case, we have some profiling
   // flags.
   if (enable_profiling) {
-    return {
+    std::vector<const char*> flags = {
         // This is the default. But just be explicit.
         "--profiler",
         // This instructs the profiler to walk C++ frames, and to include
@@ -208,6 +210,16 @@ static std::vector<const char*> ProfilingFlags(bool enable_profiling) {
         "--profile_period=1000",
 #endif  // FML_OS_IOS && FML_ARCH_CPU_ARM_FAMILY && FML_ARCH_CPU_ARMEL
     };
+
+    if (profile_startup) {
+      // This instructs the profiler to discard new samples once the profiler
+      // sample buffer is full. When this flag is not set, the profiler sample
+      // buffer is used as a ring buffer, meaning that once it is full, new
+      // samples start overwriting the oldest ones."
+      flags.push_back("--profile_startup");
+    }
+
+    return flags;
   } else {
     return {"--no-profiler"};
   }
@@ -284,6 +296,10 @@ DartVM::DartVM(const std::shared_ptr<const DartVMData>& vm_data,
   FML_DCHECK(isolate_name_server_);
   FML_DCHECK(service_protocol_);
 
+  if (!dart::bin::Platform::Initialize(false)) {
+    FML_LOG(FATAL) << "Dart platform-specific initialization failed";
+  }
+
   {
     TRACE_EVENT0("flutter", "dart::bin::BootstrapDartIo");
     dart::bin::BootstrapDartIo();
@@ -301,8 +317,8 @@ DartVM::DartVM(const std::shared_ptr<const DartVMData>& vm_data,
   // it does not recognize, it exits immediately.
   args.push_back("--ignore-unrecognized-flags");
 
-  for (auto* const profiler_flag :
-       ProfilingFlags(settings_.enable_dart_profiling)) {
+  for (auto* const profiler_flag : ProfilingFlags(
+           settings_.enable_dart_profiling, settings_.profile_startup)) {
     args.push_back(profiler_flag);
   }
 

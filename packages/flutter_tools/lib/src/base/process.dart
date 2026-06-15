@@ -9,8 +9,11 @@ import 'package:process/process.dart';
 
 import '../convert.dart';
 import '../globals.dart' as globals;
+import 'async_guard.dart';
+import 'exit.dart';
 import 'io.dart';
 import 'logger.dart';
+import 'utils.dart';
 
 typedef StringConverter = String? Function(String string);
 
@@ -25,6 +28,9 @@ typedef ShutdownHook = FutureOr<void> Function();
 
 abstract class ShutdownHooks {
   factory ShutdownHooks() = _DefaultShutdownHooks;
+
+  /// Indicates whether the shutdown hooks have been run.
+  bool get isShuttingDown;
 
   /// Registers a [ShutdownHook] to be executed before the VM exits.
   void addShutdownHook(ShutdownHook shutdownHook);
@@ -51,6 +57,10 @@ class _DefaultShutdownHooks implements ShutdownHooks {
   @override
   final registeredHooks = <ShutdownHook>[];
 
+  @override
+  bool get isShuttingDown => _isShuttingDown;
+  var _isShuttingDown = false;
+
   var _shutdownHooksRunning = false;
 
   @override
@@ -61,18 +71,40 @@ class _DefaultShutdownHooks implements ShutdownHooks {
 
   @override
   Future<void> runShutdownHooks(Logger logger) async {
+    if (_isShuttingDown) {
+      return;
+    }
+    _isShuttingDown = true;
     logger.printTrace(
       'Running ${registeredHooks.length} shutdown hook${registeredHooks.length == 1 ? '' : 's'}',
     );
     _shutdownHooksRunning = true;
+    final uncaught = <(Object, StackTrace)>[];
     try {
-      final futures = <Future<dynamic>>[
-        for (final ShutdownHook shutdownHook in registeredHooks)
-          if (shutdownHook() case final Future<dynamic> result) result,
-      ];
-      await Future.wait<dynamic>(futures);
+      final futures = <Future<void>>[];
+      for (final ShutdownHook shutdownHook in registeredHooks) {
+        try {
+          final Future<void> future = asyncGuard<void>(
+            () async => shutdownHook(),
+            onError: (Object e, StackTrace s) {
+              uncaught.add((e, s));
+            },
+          );
+          futures.add(future);
+        } on Object catch (e, s) {
+          uncaught.add((e, s));
+        }
+      }
+      await Future.wait<void>(futures);
     } finally {
       _shutdownHooksRunning = false;
+    }
+    if (uncaught.isNotEmpty) {
+      logger.printWarning('One or more uncaught errors occurred shutting down:');
+      for (final (Object e, StackTrace s) in uncaught) {
+        logger.printWarning('$e', indent: 2);
+        logger.printTrace('$s');
+      }
     }
     logger.printTrace('Shutdown hooks complete');
   }
@@ -100,6 +132,9 @@ class RunResult {
   int get exitCode => processResult.exitCode;
   String get stdout => processResult.stdout as String;
   String get stderr => processResult.stderr as String;
+
+  /// Returns the command executed.
+  List<String> get command => [..._command];
 
   @override
   String toString() {
@@ -527,8 +562,7 @@ class _DefaultProcessUtils implements ProcessUtils {
       environment: environment,
     );
     final StreamSubscription<String> stdoutSubscription = process.stdout
-        .transform<String>(utf8.decoder)
-        .transform<String>(const LineSplitter())
+        .transform(utf8LineDecoder)
         .where((String line) => filter == null || filter.hasMatch(line))
         .listen((String line) {
           String? mappedLine = line;
@@ -547,8 +581,7 @@ class _DefaultProcessUtils implements ProcessUtils {
           }
         });
     final StreamSubscription<String> stderrSubscription = process.stderr
-        .transform<String>(utf8.decoder)
-        .transform<String>(const LineSplitter())
+        .transform(utf8LineDecoder)
         .where((String line) => filter == null || filter.hasMatch(line))
         .listen((String line) {
           String? mappedLine = line;

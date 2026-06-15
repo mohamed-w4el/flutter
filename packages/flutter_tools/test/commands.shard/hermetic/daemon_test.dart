@@ -452,7 +452,7 @@ void main() {
                 'hotReload': true,
                 'hotRestart': true,
                 'screenshot': true,
-                'fastStart': true,
+                'fastStart': false,
                 'flutterExit': true,
                 'hardwareRendering': true,
                 'startPaused': true,
@@ -662,6 +662,7 @@ void main() {
               'deviceId': 'device',
               'disableServiceAuthCodes': false,
               'vmServiceUri': 'http://fake_uri/auth_code',
+              'enableDevTools': true,
             },
           }),
         );
@@ -676,6 +677,10 @@ void main() {
         expect(device.dds.startCalled, true);
         expect(device.dds.startDisableServiceAuthCodes, false);
         expect(device.dds.startVMServiceUri, Uri.parse('http://fake_uri/auth_code'));
+        expect(device.dds.enableDevTools, true);
+        expect(device.dds.startAppName, contains('Kind: Flutter'));
+        expect(device.dds.startAppName, contains('Device: android device'));
+        expect(device.dds.startAppName, contains('Package: flutter_tools'));
 
         // dds.done event should be sent to the client.
         ddsDoneCompleter.complete();
@@ -1173,9 +1178,6 @@ class FakeAndroidDevice extends Fake implements AndroidDevice {
   bool get supportsScreenshot => true;
 
   @override
-  bool get supportsFastStart => true;
-
-  @override
   bool get supportsFlutterExit => true;
 
   @override
@@ -1227,11 +1229,13 @@ class FakeAndroidDevice extends Fake implements AndroidDevice {
 }
 
 class FakeDartDevelopmentService extends Fake implements DartDevelopmentService {
-  var startCalled = false;
+  bool startCalled = false;
   late Uri startVMServiceUri;
   bool? startDisableServiceAuthCodes;
 
-  var shutdownCalled = false;
+  bool shutdownCalled = false;
+  bool enableDevTools = false;
+  String? startAppName;
 
   @override
   late Future<void> done;
@@ -1240,8 +1244,15 @@ class FakeDartDevelopmentService extends Fake implements DartDevelopmentService 
   Uri? uri;
 
   @override
+  Uri? devToolsUri;
+
+  @override
+  Uri? dtdUri;
+
+  @override
   Future<void> startDartDevelopmentService(
     Uri vmServiceUri, {
+    String? appName = 'Fake App',
     int? ddsPort,
     FlutterDevice? device,
     bool? ipv6,
@@ -1254,6 +1265,8 @@ class FakeDartDevelopmentService extends Fake implements DartDevelopmentService 
     startCalled = true;
     startVMServiceUri = vmServiceUri;
     startDisableServiceAuthCodes = disableServiceAuthCodes;
+    this.enableDevTools = enableDevTools;
+    startAppName = appName;
   }
 
   @override
@@ -1264,7 +1277,7 @@ class FakeDartDevelopmentService extends Fake implements DartDevelopmentService 
 
 class FakeDeviceLogReader implements DeviceLogReader {
   final logLinesController = StreamController<String>();
-  var disposeCalled = false;
+  bool disposeCalled = false;
 
   @override
   void dispose() {
@@ -1300,7 +1313,7 @@ class FakeApplicationPackageFactory implements ApplicationPackageFactory {
 
 class FakeApplicationPackage extends Fake implements ApplicationPackage {}
 
-class TestIOOverrides extends io.IOOverrides {
+final class TestIOOverrides extends io.IOOverrides {
   late Future<io.Socket> Function(Object? host, int port) connectCallback;
 
   @override
@@ -1316,7 +1329,7 @@ class TestIOOverrides extends io.IOOverrides {
 }
 
 class FakeSocket extends Fake implements io.Socket {
-  var closeCalled = false;
+  bool closeCalled = false;
   final controller = StreamController<Uint8List>();
   final addedData = <List<int>>[];
   final doneCompleter = Completer<bool>();

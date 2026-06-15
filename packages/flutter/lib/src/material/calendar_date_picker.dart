@@ -21,6 +21,7 @@ import 'icon_button.dart';
 import 'icons.dart';
 import 'ink_decoration.dart';
 import 'ink_well.dart';
+import 'material.dart';
 import 'material_localizations.dart';
 import 'material_state.dart';
 import 'theme.dart';
@@ -200,6 +201,7 @@ class CalendarDatePicker extends StatefulWidget {
 
 class _CalendarDatePickerState extends State<CalendarDatePicker> {
   bool _announcedInitialDate = false;
+  String _announcementText = '';
   late DatePickerMode _mode;
   late DateTime _currentDisplayedMonthDate;
   DateTime? _selectedDate;
@@ -234,11 +236,23 @@ class _CalendarDatePickerState extends State<CalendarDatePicker> {
       assert(_selectedDate != null);
       _announcedInitialDate = true;
       final bool isToday = widget.calendarDelegate.isSameDay(widget.currentDate, _selectedDate);
-      final String semanticLabelSuffix = isToday ? ', ${_localizations.currentDateLabel}' : '';
-      SemanticsService.announce(
-        '${_localizations.formatFullDate(_selectedDate!)}$semanticLabelSuffix',
-        _textDirection,
-      );
+      final semanticLabelSuffix = isToday ? ', ${_localizations.currentDateLabel}' : '';
+      _announce('${_localizations.formatFullDate(_selectedDate!)}$semanticLabelSuffix');
+    }
+  }
+
+  // Auxiliary method for handling the difference between platforms
+  void _announce(String message) {
+    if (MediaQuery.maybeSupportsAnnounceOf(context) ?? false) {
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        message,
+        Directionality.of(context),
+      ).catchError(_reportAnnouncementError);
+    } else {
+      // If SemanticsService.sendAnnouncement is not supported,
+      // we use live region to achieve the announcement effect instead.
+      _announcementText = message;
     }
   }
 
@@ -264,7 +278,7 @@ class _CalendarDatePickerState extends State<CalendarDatePicker> {
           DatePickerMode.day => widget.calendarDelegate.formatMonthYear(selected, _localizations),
           DatePickerMode.year => widget.calendarDelegate.formatYear(selected.year, _localizations),
         };
-        SemanticsService.announce(message, _textDirection);
+        _announce(message);
       }
     });
   }
@@ -313,11 +327,12 @@ class _CalendarDatePickerState extends State<CalendarDatePicker> {
         case TargetPlatform.macOS:
         case TargetPlatform.windows:
           final bool isToday = widget.calendarDelegate.isSameDay(widget.currentDate, _selectedDate);
-          final String semanticLabelSuffix = isToday ? ', ${_localizations.currentDateLabel}' : '';
-          SemanticsService.announce(
+          final semanticLabelSuffix = isToday ? ', ${_localizations.currentDateLabel}' : '';
+          SemanticsService.sendAnnouncement(
+            View.of(context),
             '${_localizations.selectedDateLabel} ${widget.calendarDelegate.formatFullDate(_selectedDate!, _localizations)}$semanticLabelSuffix',
             _textDirection,
-          );
+          ).catchError(_reportAnnouncementError);
         case TargetPlatform.android:
         case TargetPlatform.iOS:
         case TargetPlatform.fuchsia:
@@ -386,9 +401,23 @@ class _CalendarDatePickerState extends State<CalendarDatePicker> {
     final double scaledMaxDayPickerHeight = textScaleFactor > 1.3
         ? maxDayPickerHeight + ((_maxDayPickerRowCount + 1) * ((textScaleFactor - 1) * 8))
         : maxDayPickerHeight;
+    final picker = SizedBox(
+      height: _subHeaderHeight + scaledMaxDayPickerHeight,
+      child: _buildPicker(),
+    );
     return Stack(
       children: <Widget>[
-        SizedBox(height: _subHeaderHeight + scaledMaxDayPickerHeight, child: _buildPicker()),
+        if (MediaQuery.maybeSupportsAnnounceOf(context) ?? false)
+          picker
+        else
+          Semantics(
+            container: true,
+            liveRegion: true,
+            accessibilityFocusBlockType: AccessibilityFocusBlockType.blockNode,
+            label: _announcementText,
+            child: picker,
+          ),
+
         // Put the mode toggle button on top so that it won't be covered up by the _MonthPicker
         MediaQuery.withClampedTextScaling(
           maxScaleFactor: _kModeToggleButtonMaxScaleFactor,
@@ -591,10 +620,10 @@ class _MonthPicker extends StatefulWidget {
 
 class _MonthPickerState extends State<_MonthPicker> {
   final GlobalKey _pageViewKey = GlobalKey();
+  String _announcementText = '';
   late DateTime _currentMonth;
   late PageController _pageController;
   late MaterialLocalizations _localizations;
-  late TextDirection _textDirection;
   Map<ShortcutActivator, Intent>? _shortcutMap;
   Map<Type, Action<Intent>>? _actionMap;
   late FocusNode _dayGridFocus;
@@ -633,7 +662,6 @@ class _MonthPickerState extends State<_MonthPicker> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _localizations = MaterialLocalizations.of(context);
-    _textDirection = Directionality.of(context);
   }
 
   @override
@@ -646,6 +674,21 @@ class _MonthPickerState extends State<_MonthPicker> {
   void _handleDateSelected(DateTime selectedDate) {
     _focusedDay = selectedDate;
     widget.onChanged(selectedDate);
+  }
+
+  // Auxiliary method for handling the difference between platforms
+  void _announce(String message) {
+    if (MediaQuery.maybeSupportsAnnounceOf(context) ?? false) {
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        message,
+        Directionality.of(context),
+      ).catchError(_reportAnnouncementError);
+    } else {
+      // If SemanticsService.sendAnnouncement is not supported,
+      // we use live region to achieve the announcement effect instead.
+      _announcementText = message;
+    }
   }
 
   void _handleMonthPageChanged(int monthPage) {
@@ -664,10 +707,7 @@ class _MonthPickerState extends State<_MonthPicker> {
           // the same day of the month.
           _focusedDay = _focusableDayForMonth(_currentMonth, _focusedDay!.day);
         }
-        SemanticsService.announce(
-          widget.calendarDelegate.formatMonthYear(_currentMonth, _localizations),
-          _textDirection,
-        );
+        _announce(widget.calendarDelegate.formatMonthYear(_currentMonth, _localizations));
       }
     });
   }
@@ -693,7 +733,7 @@ class _MonthPickerState extends State<_MonthPicker> {
     }
 
     // Start at the 1st and take the first selectable date.
-    for (int day = 1; day <= daysInMonth; day++) {
+    for (var day = 1; day <= daysInMonth; day++) {
       final DateTime newFocus = widget.calendarDelegate.getDay(month.year, month.month, day);
       if (_isSelectable(newFocus)) {
         return newFocus;
@@ -851,9 +891,15 @@ class _MonthPickerState extends State<_MonthPicker> {
         DatePickerTheme.of(context).subHeaderForegroundColor ??
         DatePickerTheme.defaults(context).subHeaderForegroundColor;
 
+    final bool supportsAnnounce = MediaQuery.maybeSupportsAnnounceOf(context) ?? false;
     return Semantics(
       container: true,
       explicitChildNodes: true,
+      liveRegion: !supportsAnnounce,
+      accessibilityFocusBlockType: !supportsAnnounce
+          ? AccessibilityFocusBlockType.blockNode
+          : AccessibilityFocusBlockType.none,
+      label: !supportsAnnounce ? _announcementText : null,
       child: Column(
         children: <Widget>[
           SizedBox(
@@ -864,13 +910,23 @@ class _MonthPickerState extends State<_MonthPicker> {
                 children: <Widget>[
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.chevron_left),
+                    icon: Icon(
+                      Icons.chevron_left,
+                      semanticLabel: _isDisplayingFirstMonth
+                          ? _localizations.previousMonthTooltip
+                          : null,
+                    ),
                     color: subHeaderForegroundColor,
                     tooltip: _isDisplayingFirstMonth ? null : _localizations.previousMonthTooltip,
                     onPressed: _isDisplayingFirstMonth ? null : _handlePreviousMonth,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.chevron_right),
+                    icon: Icon(
+                      Icons.chevron_right,
+                      semanticLabel: _isDisplayingLastMonth
+                          ? _localizations.nextMonthTooltip
+                          : null,
+                    ),
                     color: subHeaderForegroundColor,
                     tooltip: _isDisplayingLastMonth ? null : _localizations.nextMonthTooltip,
                     onPressed: _isDisplayingLastMonth ? null : _handleNextMonth,
@@ -888,13 +944,18 @@ class _MonthPickerState extends State<_MonthPicker> {
               child: _FocusedDate(
                 calendarDelegate: widget.calendarDelegate,
                 date: _dayGridFocus.hasFocus ? _focusedDay : null,
-                child: PageView.builder(
-                  key: _pageViewKey,
-                  controller: _pageController,
-                  itemBuilder: _buildItems,
-                  itemCount:
-                      widget.calendarDelegate.monthDelta(widget.firstDate, widget.lastDate) + 1,
-                  onPageChanged: _handleMonthPageChanged,
+                // Wrap the PageView with `Material`, so when its child paints on materials
+                // the content won't go out of boundary during page transition.
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: PageView.builder(
+                    key: _pageViewKey,
+                    controller: _pageController,
+                    itemBuilder: _buildItems,
+                    itemCount:
+                        widget.calendarDelegate.monthDelta(widget.firstDate, widget.lastDate) + 1,
+                    onPageChanged: _handleMonthPageChanged,
+                  ),
                 ),
               ),
             ),
@@ -1034,7 +1095,7 @@ class _DayPickerState extends State<_DayPicker> {
   ///     4 5 6 7 8 9 10
   ///
   List<Widget> _dayHeaders(TextStyle? headerStyle, MaterialLocalizations localizations) {
-    final List<Widget> result = <Widget>[];
+    final result = <Widget>[];
     for (
       int i = localizations.firstDayOfWeekIndex;
       result.length < DateTime.daysPerWeek;
@@ -1058,7 +1119,7 @@ class _DayPickerState extends State<_DayPicker> {
     final TextStyle? weekdayStyle = datePickerTheme.weekdayStyle ?? defaults.weekdayStyle;
 
     final Orientation orientation = MediaQuery.orientationOf(context);
-    final bool isLandscapeOrientation = orientation == Orientation.landscape;
+    final isLandscapeOrientation = orientation == Orientation.landscape;
 
     final int year = widget.displayedMonth.year;
     final int month = widget.displayedMonth.month;
@@ -1158,8 +1219,8 @@ class _DayState extends State<_Day> {
     }
 
     T? resolve<T>(
-      MaterialStateProperty<T>? Function(DatePickerThemeData? theme) getProperty,
-      Set<MaterialState> states,
+      WidgetStateProperty<T>? Function(DatePickerThemeData? theme) getProperty,
+      Set<WidgetState> states,
     ) {
       return effectiveValue((DatePickerThemeData? theme) {
         return getProperty(theme)?.resolve(states);
@@ -1167,11 +1228,11 @@ class _DayState extends State<_Day> {
     }
 
     final MaterialLocalizations localizations = MaterialLocalizations.of(context);
-    final String semanticLabelSuffix = widget.isToday ? ', ${localizations.currentDateLabel}' : '';
+    final semanticLabelSuffix = widget.isToday ? ', ${localizations.currentDateLabel}' : '';
 
-    final Set<MaterialState> states = <MaterialState>{
-      if (widget.isDisabled) MaterialState.disabled,
-      if (widget.isSelectedDay) MaterialState.selected,
+    final states = <WidgetState>{
+      if (widget.isDisabled) WidgetState.disabled,
+      if (widget.isSelectedDay) WidgetState.selected,
     };
 
     _statesController.value = states;
@@ -1186,22 +1247,25 @@ class _DayState extends State<_Day> {
           widget.isToday ? theme?.todayBackgroundColor : theme?.dayBackgroundColor,
       states,
     );
-    final MaterialStateProperty<Color?> dayOverlayColor = MaterialStateProperty.resolveWith<Color?>(
-      (Set<MaterialState> states) =>
+    final WidgetStateProperty<Color?> dayOverlayColor = WidgetStateProperty.resolveWith<Color?>(
+      (Set<WidgetState> states) =>
           effectiveValue((DatePickerThemeData? theme) => theme?.dayOverlayColor?.resolve(states)),
     );
     final OutlinedBorder dayShape = resolve<OutlinedBorder?>(
       (DatePickerThemeData? theme) => theme?.dayShape,
       states,
     )!;
-    final ShapeDecoration decoration = widget.isToday
+    final bool hasCustomBorderColor =
+        datePickerTheme.todayBorder != null && datePickerTheme.todayBorder!.color.opacity != 0.0;
+    final BorderSide todayBorderSide = hasCustomBorderColor
+        ? datePickerTheme.todayBorder!
+        : (datePickerTheme.todayBorder ?? defaults.todayBorder!).copyWith(
+            color: dayForegroundColor,
+          );
+    final decoration = widget.isToday
         ? ShapeDecoration(
             color: dayBackgroundColor,
-            shape: dayShape.copyWith(
-              side: (datePickerTheme.todayBorder ?? defaults.todayBorder!).copyWith(
-                color: dayForegroundColor,
-              ),
-            ),
+            shape: dayShape.copyWith(side: todayBorderSide),
           )
         : ShapeDecoration(color: dayBackgroundColor, shape: dayShape);
 
@@ -1221,10 +1285,24 @@ class _DayState extends State<_Day> {
     if (Theme.of(context).useMaterial3 && orientation == Orientation.portrait) {
       dayWidget = Padding(padding: const EdgeInsets.all(4.0), child: dayWidget);
     }
+    dayWidget = Semantics(
+      // We want the day of month to be spoken first irrespective of the
+      // locale-specific preferences or TextDirection. This is because
+      // an accessibility user is more likely to be interested in the
+      // day of month before the rest of the date, as they are looking
+      // for the day of month. To do that we prepend day of month to the
+      // formatted full date.
+      label:
+          '${localizations.formatDecimal(widget.day.day)}, ${widget.calendarDelegate.formatFullDate(widget.day, localizations)}$semanticLabelSuffix',
+      // Set button to true to make the date selectable.
+      button: true,
+      selected: widget.isSelectedDay,
+      enabled: !widget.isDisabled,
+      excludeSemantics: true,
+      child: dayWidget,
+    );
 
-    if (widget.isDisabled) {
-      dayWidget = ExcludeSemantics(child: dayWidget);
-    } else {
+    if (!widget.isDisabled) {
       dayWidget = InkResponse(
         focusNode: widget.focusNode,
         onTap: () => widget.onChanged(widget.day),
@@ -1232,21 +1310,7 @@ class _DayState extends State<_Day> {
         overlayColor: dayOverlayColor,
         customBorder: dayShape,
         containedInkWell: true,
-        child: Semantics(
-          // We want the day of month to be spoken first irrespective of the
-          // locale-specific preferences or TextDirection. This is because
-          // an accessibility user is more likely to be interested in the
-          // day of month before the rest of the date, as they are looking
-          // for the day of month. To do that we prepend day of month to the
-          // formatted full date.
-          label:
-              '${localizations.formatDecimal(widget.day.day)}, ${widget.calendarDelegate.formatFullDate(widget.day, localizations)}$semanticLabelSuffix',
-          // Set button to true to make the date selectable.
-          button: true,
-          selected: widget.isSelectedDay,
-          excludeSemantics: true,
-          child: dayWidget,
-        ),
+        child: dayWidget,
       );
     }
 
@@ -1411,8 +1475,8 @@ class _YearPickerState extends State<YearPicker> {
     }
 
     T? resolve<T>(
-      MaterialStateProperty<T>? Function(DatePickerThemeData? theme) getProperty,
-      Set<MaterialState> states,
+      WidgetStateProperty<T>? Function(DatePickerThemeData? theme) getProperty,
+      Set<WidgetState> states,
     ) {
       return effectiveValue((DatePickerThemeData? theme) {
         return getProperty(theme)?.resolve(states);
@@ -1426,15 +1490,15 @@ class _YearPickerState extends State<YearPicker> {
     // Backfill the _YearPicker with disabled years if necessary.
     final int offset = _itemCount < minYears ? (minYears - _itemCount) ~/ 2 : 0;
     final int year = widget.firstDate.year + index - offset;
-    final bool isSelected = year == widget.selectedDate?.year;
-    final bool isCurrentYear = year == widget.currentDate.year;
+    final isSelected = year == widget.selectedDate?.year;
+    final isCurrentYear = year == widget.currentDate.year;
     final bool isDisabled = year < widget.firstDate.year || year > widget.lastDate.year;
     final double decorationHeight = 36.0 * textScaleFactor;
     final double decorationWidth = 72.0 * textScaleFactor;
 
-    final Set<MaterialState> states = <MaterialState>{
-      if (isDisabled) MaterialState.disabled,
-      if (isSelected) MaterialState.selected,
+    final states = <WidgetState>{
+      if (isDisabled) WidgetState.disabled,
+      if (isSelected) WidgetState.selected,
     };
 
     final Color? textColor = resolve<Color?>(
@@ -1447,8 +1511,8 @@ class _YearPickerState extends State<YearPicker> {
           isCurrentYear ? theme?.todayBackgroundColor : theme?.yearBackgroundColor,
       states,
     );
-    final MaterialStateProperty<Color?> overlayColor = MaterialStateProperty.resolveWith<Color?>(
-      (Set<MaterialState> states) =>
+    final WidgetStateProperty<Color?> overlayColor = WidgetStateProperty.resolveWith<Color?>(
+      (Set<WidgetState> states) =>
           effectiveValue((DatePickerThemeData? theme) => theme?.yearOverlayColor?.resolve(states)),
     );
 
@@ -1464,7 +1528,7 @@ class _YearPickerState extends State<YearPicker> {
         borderSide = borderSide.copyWith(color: textColor);
       }
     }
-    final ShapeDecoration decoration = ShapeDecoration(
+    final decoration = ShapeDecoration(
       color: background,
       shape: yearShape.copyWith(side: borderSide),
     );
@@ -1481,15 +1545,14 @@ class _YearPickerState extends State<YearPicker> {
         alignment: Alignment.center,
         child: Semantics(
           selected: isSelected,
+          enabled: !isDisabled,
           button: true,
           child: Text(widget.calendarDelegate.formatYear(year, localizations), style: itemStyle),
         ),
       ),
     );
 
-    if (isDisabled) {
-      yearItem = ExcludeSemantics(child: yearItem);
-    } else {
+    if (!isDisabled) {
       DateTime date = widget.calendarDelegate.getMonth(
         year,
         widget.selectedDate?.month ?? DateTime.january,
@@ -1524,18 +1587,20 @@ class _YearPickerState extends State<YearPicker> {
 
   @override
   Widget build(BuildContext context) {
-    assert(debugCheckHasMaterial(context));
     return Column(
       children: <Widget>[
         const Divider(),
         Expanded(
-          child: GridView.builder(
-            controller: _scrollController,
-            dragStartBehavior: widget.dragStartBehavior,
-            gridDelegate: _YearPickerGridDelegate(context),
-            itemBuilder: _buildYearItem,
-            itemCount: math.max(_itemCount, minYears),
-            padding: const EdgeInsets.symmetric(horizontal: _yearPickerPadding),
+          child: Material(
+            type: MaterialType.transparency,
+            child: GridView.builder(
+              controller: _scrollController,
+              dragStartBehavior: widget.dragStartBehavior,
+              gridDelegate: _YearPickerGridDelegate(context),
+              itemBuilder: _buildYearItem,
+              itemCount: math.max(_itemCount, minYears),
+              padding: const EdgeInsets.symmetric(horizontal: _yearPickerPadding),
+            ),
           ),
         ),
         const Divider(),
@@ -1557,9 +1622,11 @@ class _YearPickerGridDelegate extends SliverGridDelegate {
     final int scaledYearPickerColumnCount = textScaleFactor > 1.65
         ? _yearPickerColumnCount - 1
         : _yearPickerColumnCount;
-    final double tileWidth =
-        (constraints.crossAxisExtent - (scaledYearPickerColumnCount - 1) * _yearPickerRowSpacing) /
-        scaledYearPickerColumnCount;
+    final double tileWidth = math.max(
+      (constraints.crossAxisExtent - (scaledYearPickerColumnCount - 1) * _yearPickerRowSpacing) /
+          scaledYearPickerColumnCount,
+      0.0,
+    );
     final double scaledYearPickerRowHeight = textScaleFactor > 1
         ? _yearPickerRowHeight + ((textScaleFactor - 1) * 9)
         : _yearPickerRowHeight;
@@ -1575,4 +1642,15 @@ class _YearPickerGridDelegate extends SliverGridDelegate {
 
   @override
   bool shouldRelayout(_YearPickerGridDelegate oldDelegate) => false;
+}
+
+void _reportAnnouncementError(Object exception, StackTrace stack) {
+  FlutterError.reportError(
+    FlutterErrorDetails(
+      exception: exception,
+      stack: stack,
+      library: 'material library',
+      context: ErrorDescription('while sending semantics announcement'),
+    ),
+  );
 }

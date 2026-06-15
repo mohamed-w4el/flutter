@@ -19,12 +19,13 @@ Environment? _environment;
 /// Contains various environment variables, such as common file paths and command-line options.
 class Environment {
   factory Environment() {
-    final bool isMacosArm = ffi.Abi.current() == ffi.Abi.macosArm64;
-    final io.File dartExecutable = io.File(io.Platform.resolvedExecutable);
-    final io.File self = io.File.fromUri(io.Platform.script);
+    final isMacosArm = ffi.Abi.current() == ffi.Abi.macosArm64;
+    final dartExecutable = io.File(io.Platform.resolvedExecutable);
+    final self = io.File.fromUri(io.Platform.script);
 
     final io.Directory engineSrcDir = self.parent.parent.parent.parent.parent;
     final io.Directory flutterRootDir = engineSrcDir.parent.parent;
+<<<<<<< HEAD
     final io.Directory engineToolsDir = io.Directory(
       pathlib.join(engineSrcDir.path, 'flutter', 'tools'),
     );
@@ -37,12 +38,18 @@ class Environment {
     final io.Directory hostDebugUnoptDir = io.Directory(
       pathlib.join(outDir.path, 'host_debug_unopt'),
     );
+=======
+    final engineToolsDir = io.Directory(pathlib.join(engineSrcDir.path, 'flutter', 'tools'));
+    final outDir = io.Directory(pathlib.join(engineSrcDir.path, 'out'));
+    final wasmReleaseOutDir = io.Directory(pathlib.join(outDir.path, 'wasm_release'));
+    final wasmProfileOutDir = io.Directory(pathlib.join(outDir.path, 'wasm_profile'));
+    final wasmDebugUnoptOutDir = io.Directory(pathlib.join(outDir.path, 'wasm_debug_unopt'));
+    final hostDebugUnoptDir = io.Directory(pathlib.join(outDir.path, 'host_debug_unopt'));
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
     final io.Directory dartSdkDir = dartExecutable.parent.parent;
-    final io.Directory webUiRootDir = io.Directory(
-      pathlib.join(engineSrcDir.path, 'flutter', 'lib', 'web_ui'),
-    );
+    final webUiRootDir = io.Directory(pathlib.join(engineSrcDir.path, 'flutter', 'lib', 'web_ui'));
 
-    for (final io.Directory expectedDirectory in <io.Directory>[engineSrcDir, webUiRootDir]) {
+    for (final expectedDirectory in <io.Directory>[engineSrcDir, webUiRootDir]) {
       if (!expectedDirectory.existsSync()) {
         throw ToolExit('$expectedDirectory does not exist.');
       }

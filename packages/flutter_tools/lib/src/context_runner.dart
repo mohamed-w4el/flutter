@@ -43,6 +43,7 @@ import 'flutter_device_manager.dart';
 import 'flutter_features.dart';
 import 'flutter_features_config.dart';
 import 'flutter_manifest.dart';
+import 'git.dart';
 import 'globals.dart' as globals;
 import 'ios/ios_workflow.dart';
 import 'ios/iproxy.dart';
@@ -154,6 +155,7 @@ Future<T> runInContext<T>(FutureOr<T> Function() runner, {Map<Type, Generator>? 
         platform: globals.platform,
         osUtils: globals.os,
         projectFactory: globals.projectFactory,
+        stdio: globals.stdio,
       ),
       CocoaPods: () => CocoaPods(
         fileSystem: globals.fs,
@@ -223,14 +225,19 @@ Future<T> runInContext<T>(FutureOr<T> Function() runner, {Map<Type, Generator>? 
           globalConfig: globals.config,
           platform: globals.platform,
           projectManifest: FlutterManifest.createFromPath(
-            globals.fs.path.join(globals.fs.currentDirectory.path, 'pubspec.yaml'),
+            globals.fs.path.join(
+              findProjectRoot(globals.fs) ?? globals.fs.currentDirectory.path,
+              'pubspec.yaml',
+            ),
             fileSystem: globals.fs,
             logger: globals.logger,
           ),
         ),
         platform: globals.platform,
       ),
-      FlutterVersion: () => FlutterVersion(fs: globals.fs, flutterRoot: Cache.flutterRoot!),
+      FlutterVersion: () =>
+          FlutterVersion(fs: globals.fs, flutterRoot: Cache.flutterRoot!, git: globals.git),
+      Git: () => Git(currentPlatform: globals.platform, runProcessWith: globals.processUtils),
       GradleUtils: () => GradleUtils(
         operatingSystemUtils: globals.os,
         logger: globals.logger,

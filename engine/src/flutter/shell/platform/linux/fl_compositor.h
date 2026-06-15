@@ -5,26 +5,33 @@
 #ifndef FLUTTER_SHELL_PLATFORM_LINUX_FL_COMPOSITOR_H_
 #define FLUTTER_SHELL_PLATFORM_LINUX_FL_COMPOSITOR_H_
 
-#include <glib-object.h>
+#include <cairo.h>
+#include <gdk/gdk.h>
 
 #include "flutter/shell/platform/embedder/embedder.h"
 
 G_BEGIN_DECLS
+
+// Maximum time to wait for a frame to be ready before giving up and rendering.
+constexpr gint64 kCompositorRenderTimeoutMicroseconds = 100000;  // 100ms
 
 G_DECLARE_DERIVABLE_TYPE(FlCompositor, fl_compositor, FL, COMPOSITOR, GObject)
 
 struct _FlCompositorClass {
   GObjectClass parent_class;
 
-  FlutterRendererType (*get_renderer_type)(FlCompositor* compositor);
-
   gboolean (*present_layers)(FlCompositor* compositor,
                              const FlutterLayer** layers,
                              size_t layers_count);
 
-  void (*wait_for_frame)(FlCompositor* compositor,
-                         int target_width,
-                         int target_height);
+  void (*get_frame_size)(FlCompositor* compositor,
+                         size_t* width,
+                         size_t* height);
+
+  gboolean (*render)(FlCompositor* compositor,
+                     cairo_t* cr,
+                     GdkWindow* window,
+                     gboolean wait_for_frame);
 };
 
 /**
@@ -34,23 +41,12 @@ struct _FlCompositorClass {
  */
 
 /**
- * fl_compositor_get_renderer_type:
- * @compositor: an #FlCompositor.
- *
- * Gets the rendering method this compositor uses.
- *
- * Returns: a FlutterRendererType.
- */
-FlutterRendererType fl_compositor_get_renderer_type(FlCompositor* compositor);
-
-/**
  * fl_compositor_present_layers:
  * @compositor: an #FlCompositor.
  * @layers: layers to be composited.
  * @layers_count: number of layers.
  *
- * Callback invoked by the engine to composite the contents of each layer
- * onto the screen.
+ * Composite layers. Called from the Flutter rendering thread.
  *
  * Returns %TRUE if successful.
  */
@@ -59,18 +55,33 @@ gboolean fl_compositor_present_layers(FlCompositor* compositor,
                                       size_t layers_count);
 
 /**
- * fl_compositor_wait_for_frame:
+ * fl_compositor_get_frame_size:
  * @compositor: an #FlCompositor.
- * @target_width: width of frame being waited for
- * @target_height: height of frame being waited for
+ * @width: location to write frame width in pixels.
+ * @height: location to write frame height in pixels.
  *
- * Holds the thread until frame with requested dimensions is presented.
- * While waiting for frame Flutter platform and raster tasks are being
- * processed.
+ * Get the size of the layer ready for rendering.
  */
-void fl_compositor_wait_for_frame(FlCompositor* compositor,
-                                  int target_width,
-                                  int target_height);
+void fl_compositor_get_frame_size(FlCompositor* compositor,
+                                  size_t* width,
+                                  size_t* height);
+
+/**
+ * fl_compositor_render:
+ * @compositor: an #FlCompositor.
+ * @cr: a Cairo rendering context.
+ * @window: window being rendered into.
+ * @wait_for_frame: if the available frame is not the size of the window block
+ * until a new frame is received.
+ *
+ * Renders the current frame. Called from the GTK thread.
+ *
+ * Returns %TRUE if successful.
+ */
+gboolean fl_compositor_render(FlCompositor* compositor,
+                              cairo_t* cr,
+                              GdkWindow* window,
+                              gboolean wait_for_frame);
 
 G_END_DECLS
 

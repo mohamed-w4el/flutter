@@ -4,7 +4,6 @@
 
 import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -181,7 +180,7 @@ class CupertinoTextFormFieldRow extends FormField<String> {
        super(
          initialValue: controller?.text ?? initialValue ?? '',
          builder: (FormFieldState<String> field) {
-           final _CupertinoTextFormFieldRowState state = field as _CupertinoTextFormFieldRowState;
+           final state = field as _CupertinoTextFormFieldRowState;
 
            void onChangedHandler(String value) {
              field.didChange(value);
@@ -280,7 +279,7 @@ class CupertinoTextFormFieldRow extends FormField<String> {
     BuildContext context,
     EditableTextState editableTextState,
   ) {
-    if (defaultTargetPlatform == TargetPlatform.iOS && SystemContextMenu.isSupported(context)) {
+    if (SystemContextMenu.isSupportedByField(editableTextState)) {
       return SystemContextMenu.editableText(editableTextState: editableTextState);
     }
     return CupertinoAdaptiveTextSelectionToolbar.editableText(editableTextState: editableTextState);

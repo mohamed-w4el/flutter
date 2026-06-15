@@ -14,6 +14,7 @@ import 'src/base/async_guard.dart';
 import 'src/base/common.dart';
 import 'src/base/context.dart';
 import 'src/base/error_handling_io.dart';
+import 'src/base/exit.dart';
 import 'src/base/file_system.dart';
 import 'src/base/io.dart';
 import 'src/base/logger.dart';
@@ -44,6 +45,11 @@ Future<int> run(
     args = List<String>.of(args);
     args.removeWhere((String option) => option == '-vv' || option == '-v' || option == '--verbose');
   }
+
+  // Reset this on each run to ensure we don't leak state across tests.
+  _alreadyHandlingToolError = null;
+
+  final bool usingLocalEngine = args.any((a) => a.startsWith('--local-engine'));
 
   return runInContext<int>(() async {
     globals.terminal.applyFeatureFlags(featureFlags);
@@ -120,6 +126,7 @@ Future<int> run(
             getVersion,
             shutdownHooks,
             featureFlags: featureFlags,
+            usingLocalEngine: usingLocalEngine,
           );
         }
       },
@@ -138,11 +145,19 @@ Future<int> run(
           getVersion,
           shutdownHooks,
           featureFlags: featureFlags,
+          usingLocalEngine: usingLocalEngine,
         );
       },
     )!;
   }, overrides: overrides);
 }
+
+/// Track if we're actively processing an error so we don't try and process
+/// additional asynchronous exceptions while we're trying to shut down.
+///
+/// NOTE: This state is cleared at the beginning of [run] to ensure state
+/// doesn't leak when running tests.
+Future<int>? _alreadyHandlingToolError;
 
 Future<int> _handleToolError(
   Object error,
@@ -152,6 +167,31 @@ Future<int> _handleToolError(
   bool reportCrashes,
   String Function() getFlutterVersion,
   ShutdownHooks shutdownHooks, {
+  required bool usingLocalEngine,
+  required FeatureFlags featureFlags,
+}) async {
+  return _alreadyHandlingToolError ??= _handleToolErrorImpl(
+    error,
+    stackTrace,
+    verbose,
+    args,
+    reportCrashes,
+    getFlutterVersion,
+    shutdownHooks,
+    usingLocalEngine: usingLocalEngine,
+    featureFlags: featureFlags,
+  );
+}
+
+Future<int> _handleToolErrorImpl(
+  Object error,
+  StackTrace? stackTrace,
+  bool verbose,
+  List<String> args,
+  bool reportCrashes,
+  String Function() getFlutterVersion,
+  ShutdownHooks shutdownHooks, {
+  required bool usingLocalEngine,
   required FeatureFlags featureFlags,
 }) async {
   if (error is UsageException) {
@@ -183,7 +223,7 @@ Future<int> _handleToolError(
     globals.printError(
       'An error was encountered when trying to run git.\n'
       "Please ensure git is installed and available in your system's search path. "
-      'See https://docs.flutter.dev/get-started/install for instructions on '
+      'See https://docs.flutter.dev/get-started for instructions on '
       'installing git for your platform.',
     );
     return exitWithHooks(1, shutdownHooks: shutdownHooks);
@@ -204,25 +244,28 @@ Future<int> _handleToolError(
     }
 
     globals.analytics.send(Event.exception(exception: error.runtimeType.toString()));
-    await asyncGuard(
-      () async {
-        final crashReportSender = CrashReportSender(
-          platform: globals.platform,
-          logger: globals.logger,
-          operatingSystemUtils: globals.os,
-          analytics: globals.analytics,
-        );
-        await crashReportSender.sendReport(
-          error: error,
-          stackTrace: stackTrace!,
-          getFlutterVersion: getFlutterVersion,
-          command: args.join(' '),
-        );
-      },
-      onError: (dynamic error) {
-        globals.printError('Error sending crash report: $error');
-      },
-    );
+
+    if (!usingLocalEngine) {
+      await asyncGuard(
+        () async {
+          final crashReportSender = CrashReportSender(
+            platform: globals.platform,
+            logger: globals.logger,
+            operatingSystemUtils: globals.os,
+            analytics: globals.analytics,
+          );
+          await crashReportSender.sendReport(
+            error: error,
+            stackTrace: stackTrace!,
+            getFlutterVersion: getFlutterVersion,
+            command: args.join(' '),
+          );
+        },
+        onError: (dynamic error) {
+          globals.printError('Error sending crash report: $error');
+        },
+      );
+    }
 
     globals.printError('Oops; flutter has exited unexpectedly: "$error".');
 

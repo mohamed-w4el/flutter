@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
 import 'binding.dart';
@@ -53,7 +54,7 @@ class NetworkImage extends image_provider.ImageProvider<image_provider.NetworkIm
     // Ownership of this controller is handed off to [_loadAsync]; it is that
     // method's responsibility to close the controller's stream when the image
     // has been loaded or an error is thrown.
-    final StreamController<ImageChunkEvent> chunkEvents = StreamController<ImageChunkEvent>();
+    final chunkEvents = StreamController<ImageChunkEvent>();
 
     return MultiFrameImageStreamCompleter(
       codec: _loadAsync(key as NetworkImage, chunkEvents, decode: decode),
@@ -75,7 +76,7 @@ class NetworkImage extends image_provider.ImageProvider<image_provider.NetworkIm
     // Ownership of this controller is handed off to [_loadAsync]; it is that
     // method's responsibility to close the controller's stream when the image
     // has been loaded or an error is thrown.
-    final StreamController<ImageChunkEvent> chunkEvents = StreamController<ImageChunkEvent>();
+    final chunkEvents = StreamController<ImageChunkEvent>();
 
     return MultiFrameImageStreamCompleter(
       codec: _loadAsync(key as NetworkImage, chunkEvents, decode: decode),
@@ -155,7 +156,17 @@ class NetworkImage extends image_provider.ImageProvider<image_provider.NetworkIm
       });
       rethrow;
     } finally {
-      chunkEvents.close();
+      // ignore: unawaited_futures
+      chunkEvents.close().catchError((Object error, StackTrace stack) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stack,
+            library: 'painting library',
+            context: ErrorDescription('while closing chunkEvents stream in NetworkImage.load'),
+          ),
+        );
+      });
     }
   }
 
@@ -164,13 +175,16 @@ class NetworkImage extends image_provider.ImageProvider<image_provider.NetworkIm
     if (other.runtimeType != runtimeType) {
       return false;
     }
-    return other is NetworkImage && other.url == url && other.scale == scale;
+    return other is NetworkImage &&
+        other.url == url &&
+        other.scale == scale &&
+        mapEquals(other.headers, headers);
   }
 
   @override
-  int get hashCode => Object.hash(url, scale);
+  int get hashCode => Object.hash(url, scale, const MapEquality<String, String>().hash(headers));
 
   @override
   String toString() =>
-      '${objectRuntimeType(this, 'NetworkImage')}("$url", scale: ${scale.toStringAsFixed(1)})';
+      '${objectRuntimeType(this, 'NetworkImage')}("$url", scale: ${scale.toStringAsFixed(1)}, webHtmlElementStrategy: ${webHtmlElementStrategy.name}, headers: $headers)';
 }

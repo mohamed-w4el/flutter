@@ -39,7 +39,7 @@ class TestHttpRequest {
       setRequestHeader: setRequestHeader.toJS,
       addEventListener: addEventListener.toJS,
     );
-    final JSAny mock = _mock as JSAny;
+    final JSAny mock = _mock.jsify()!;
     createGetter(mock, 'headers', () => headers.jsify());
     createGetter(mock, 'responseHeaders', () => responseHeaders.jsify());
     createGetter(mock, 'status', () => status.toJS);
@@ -61,13 +61,12 @@ class TestHttpRequest {
 
   JSVoid addEventListener(String type, web.EventListener listener) {
     if (type == mockEvent?.type) {
-      final _DartDomEventListener dartListener =
-          (listener as JSExportedDartFunction).toDart as _DartDomEventListener;
+      final dartListener = (listener as JSExportedDartFunction).toDart as _DartDomEventListener;
       dartListener(mockEvent!.event);
     }
   }
 
-  web.XMLHttpRequest getMock() => _mock as web.XMLHttpRequest;
+  web.XMLHttpRequest getMock() => _mock.jsify()! as web.XMLHttpRequest;
 }
 
 class MockEvent {
@@ -87,7 +86,7 @@ class ImgElementMock {
 class TestImgElement {
   TestImgElement() {
     _mock = ImgElementMock(decode: decode.toJS);
-    final JSAny mock = _mock as JSAny;
+    final JSAny mock = _mock.jsify()!;
     objectDefineProperty(
       mock,
       'src',
@@ -123,8 +122,8 @@ class TestImgElement {
   late ImgElementMock _mock;
 
   String src = '';
-  int naturalWidth = -1;
-  int naturalHeight = -1;
+  int naturalWidth = 1;
+  int naturalHeight = 1;
 
   // Either `decode` or `decodeSuccess/Failure` may be called first.
   // The following fields allow properly handling either case.
@@ -169,5 +168,5 @@ class TestImgElement {
     }
   }
 
-  web.HTMLImageElement getMock() => _mock as web.HTMLImageElement;
+  web.HTMLImageElement getMock() => _mock.jsify()! as web.HTMLImageElement;
 }

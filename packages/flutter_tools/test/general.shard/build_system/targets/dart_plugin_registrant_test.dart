@@ -112,6 +112,7 @@ void main() {
         'darwin-x64': false,
         'linux-x64': false,
         'linux-arm64': false,
+        'linux-riscv64': false,
         'windows-x64': false,
         'web-javascript': true,
         'ios': false,
@@ -286,7 +287,7 @@ name: path_provider_example
             '// @dart = 2.12\n'
             '\n'
             "import 'dart:io'; // flutter_ignore: dart_io_import.\n"
-            "import 'package:path_provider_linux/path_provider_linux.dart';\n"
+            "import 'package:path_provider_linux/path_provider_linux.dart' as path_provider_linux;\n"
             '\n'
             "@pragma('vm:entry-point')\n"
             'class _PluginRegistrant {\n'
@@ -297,7 +298,7 @@ name: path_provider_example
             '    } else if (Platform.isIOS) {\n'
             '    } else if (Platform.isLinux) {\n'
             '      try {\n'
-            '        PathProviderLinux.registerWith();\n'
+            '        path_provider_linux.PathProviderLinux.registerWith();\n'
             '      } catch (err) {\n'
             '        print(\n'
             "          '`path_provider_linux` threw an error: \$err. '\n"
@@ -425,7 +426,7 @@ name: path_provider_example
             '// @dart = 2.12\n'
             '\n'
             "import 'dart:io'; // flutter_ignore: dart_io_import.\n"
-            "import 'package:path_provider_linux/path_provider_linux.dart';\n"
+            "import 'package:path_provider_linux/path_provider_linux.dart' as path_provider_linux;\n"
             '\n'
             "@pragma('vm:entry-point')\n"
             'class _PluginRegistrant {\n'
@@ -436,7 +437,7 @@ name: path_provider_example
             '    } else if (Platform.isIOS) {\n'
             '    } else if (Platform.isLinux) {\n'
             '      try {\n'
-            '        PathProviderLinux.registerWith();\n'
+            '        path_provider_linux.PathProviderLinux.registerWith();\n'
             '      } catch (err) {\n'
             '        print(\n'
             "          '`path_provider_linux` threw an error: \$err. '\n"

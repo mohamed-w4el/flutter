@@ -723,6 +723,7 @@ void main() {
           traceToFile: 'path/to/trace.binpb',
           endlessTraceBuffer: true,
           profileMicrotasks: true,
+          profileStartup: true,
           purgePersistentCache: true,
           verboseSystemLogs: true,
           enableImpeller: ImpellerStatus.disabled,
@@ -740,6 +741,7 @@ void main() {
           launchArguments.join(' '),
           <String>[
             '--enable-dart-profiling',
+            '--profile-startup',
             '--disable-service-auth-codes',
             '--disable-vm-service-publication',
             '--start-paused',
@@ -878,6 +880,7 @@ void main() {
           traceToFile: 'path/to/trace.binpb',
           endlessTraceBuffer: true,
           profileMicrotasks: true,
+          profileStartup: true,
           purgePersistentCache: true,
           verboseSystemLogs: true,
           enableImpeller: ImpellerStatus.disabled,
@@ -895,6 +898,7 @@ void main() {
           launchArguments.join(' '),
           <String>[
             '--enable-dart-profiling',
+            '--profile-startup',
             '--disable-service-auth-codes',
             '--disable-vm-service-publication',
             '--start-paused',
@@ -1049,11 +1053,14 @@ class FakePollingDeviceDiscoveryWithTimeout extends FakePollingDeviceDiscovery {
     : defaultTimeout = timeout ?? const Duration(seconds: 2);
 
   final List<List<Device>> _devices;
-  var index = 0;
+  int index = 0;
 
   Duration defaultTimeout;
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout}) async {
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
     timeout ??= defaultTimeout;
     await Future<void>.delayed(timeout);
     final List<Device> results = _devices[index];
@@ -1070,7 +1077,10 @@ class LongPollingDeviceDiscovery extends PollingDeviceDiscovery {
   final _completer = Completer<List<Device>>();
 
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout}) async {
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
     return _completer.future;
   }
 
@@ -1098,7 +1108,10 @@ class ThrowingPollingDeviceDiscovery extends PollingDeviceDiscovery {
   ThrowingPollingDeviceDiscovery() : super('throw');
 
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout}) async {
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
     throw const ProcessException('fake-discovery', <String>[]);
   }
 
@@ -1118,7 +1131,10 @@ class TestPollingDeviceDiscovery extends PollingDeviceDiscovery {
   final List<Device> _devices;
 
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout}) async {
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
     return _devices;
   }
 

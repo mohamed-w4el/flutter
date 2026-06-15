@@ -9,11 +9,14 @@ import 'package:file_testing/file_testing.dart';
 import 'package:flutter_tools/src/artifacts.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
+import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/build_system/build_system.dart';
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/features.dart';
+import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/isolated/native_assets/native_assets.dart';
+import 'package:flutter_tools/src/isolated/native_assets/targets.dart';
 
 import '../../src/common.dart';
 import '../../src/context.dart';
@@ -40,6 +43,7 @@ void main() {
       processManager: processManager,
       fileSystem: fileSystem,
       logger: logger,
+      projectDir: fileSystem.directory('/project'),
     );
     environment.buildDir.createSync(recursive: true);
     projectUri = environment.projectDir.uri;
@@ -66,7 +70,7 @@ void main() {
         makeCodeAsset('free', LookupInExecutable()),
         makeCodeAsset('draw', DynamicLoadingSystem(Uri.file('/usr/lib/skia.so'))),
       ];
-      final DartBuildResult dartBuildResult = await runFlutterSpecificDartBuild(
+      final DartHooksResult dartHookResult = await runFlutterSpecificHooks(
         environmentDefines: environmentDefines,
         targetPlatform: TargetPlatform.linux_x64,
         projectUri: projectUri,
@@ -76,14 +80,17 @@ void main() {
           buildResult: FakeFlutterNativeAssetsBuilderResult.fromAssets(),
           linkResult: FakeFlutterNativeAssetsBuilderResult.fromAssets(codeAssets: codeAssets),
         ),
+        buildCodeAssets: const BuildCodeAssetsOptions(appBuildDirectory: null),
+        buildDataAssets: true,
       );
       await installCodeAssets(
-        dartBuildResult: dartBuildResult,
+        dartHookResult: dartHookResult,
         environmentDefines: environmentDefines,
         targetPlatform: TargetPlatform.windows_x64,
         projectUri: projectUri,
         fileSystem: fileSystem,
         nativeAssetsFileUri: nonFlutterTesterAssetUri,
+        targetUri: projectUri.resolve('${getBuildDirectory()}/native_assets/test/'),
       );
       expect(testLogger.traceText, isNot(contains('Copying native assets to')));
     },
@@ -101,7 +108,7 @@ void main() {
       await packageConfig.parent.create();
       await packageConfig.create();
       expect(
-        () => runFlutterSpecificDartBuild(
+        () => runFlutterSpecificHooks(
           environmentDefines: <String, String>{kBuildMode: BuildMode.debug.cliName},
           targetPlatform: TargetPlatform.windows_x64,
           projectUri: projectUri,
@@ -109,12 +116,10 @@ void main() {
           buildRunner: FakeFlutterNativeAssetsBuildRunner(
             packagesWithNativeAssetsResult: <String>['bar'],
           ),
+          buildCodeAssets: const BuildCodeAssetsOptions(appBuildDirectory: null),
+          buildDataAssets: true,
         ),
-        throwsToolExit(
-          message:
-              'Package(s) bar require the native assets feature to be enabled. '
-              'Enable using `flutter config --enable-native-assets`.',
-        ),
+        throwsToolExit(message: 'Enable code assets using `flutter config --enable-native-assets`'),
       );
     },
   );
@@ -131,7 +136,7 @@ void main() {
       await packageConfig.create();
 
       final environmentDefines = <String, String>{kBuildMode: BuildMode.debug.cliName};
-      final DartBuildResult dartBuildResult = await runFlutterSpecificDartBuild(
+      final DartHooksResult dartHookResult = await runFlutterSpecificHooks(
         environmentDefines: environmentDefines,
         targetPlatform: TargetPlatform.windows_x64,
         projectUri: projectUri,
@@ -139,26 +144,24 @@ void main() {
         buildRunner: FakeFlutterNativeAssetsBuildRunner(
           packagesWithNativeAssetsResult: <String>['bar'],
         ),
+        buildCodeAssets: const BuildCodeAssetsOptions(appBuildDirectory: null),
+        buildDataAssets: true,
       );
+      final Directory targetDirectory = environment.buildDir.childDirectory('native_assets');
       await installCodeAssets(
-        dartBuildResult: dartBuildResult,
+        dartHookResult: dartHookResult,
         environmentDefines: environmentDefines,
         targetPlatform: TargetPlatform.windows_x64,
         projectUri: projectUri,
         fileSystem: fileSystem,
         nativeAssetsFileUri: nonFlutterTesterAssetUri,
+        targetUri: targetDirectory.uri,
       );
       expect(
         await fileSystem.file(nonFlutterTesterAssetUri).readAsString(),
         isNot(contains('package:bar/bar.dart')),
       );
-      expect(
-        environment.projectDir
-            .childDirectory('build')
-            .childDirectory('native_assets')
-            .childDirectory('windows'),
-        exists,
-      );
+      expect(targetDirectory, exists);
     },
   );
 
@@ -170,7 +173,7 @@ void main() {
       await packageConfig.parent.create();
       await packageConfig.create();
       expect(
-        () => runFlutterSpecificDartBuild(
+        () => runFlutterSpecificHooks(
           environmentDefines: <String, String>{kBuildMode: BuildMode.debug.cliName},
           targetPlatform: TargetPlatform.linux_x64,
           projectUri: projectUri,
@@ -179,6 +182,8 @@ void main() {
             packagesWithNativeAssetsResult: <String>['bar'],
             buildResult: null,
           ),
+          buildCodeAssets: const BuildCodeAssetsOptions(appBuildDirectory: null),
+          buildDataAssets: true,
         ),
         throwsToolExit(message: 'Building native assets failed. See the logs for more details.'),
       );
@@ -203,7 +208,7 @@ void main() {
       CodeAsset makeCodeAsset(String name, Uri file, LinkMode linkMode) =>
           CodeAsset(package: 'bar', name: name, linkMode: linkMode, file: file);
 
-      final DartBuildResult result = await runFlutterSpecificDartBuild(
+      final DartHooksResult result = await runFlutterSpecificHooks(
         environmentDefines: <String, String>{
           // Release mode means the dart build has linking enabled.
           kBuildMode: BuildMode.release.cliName,
@@ -229,6 +234,8 @@ void main() {
             ],
           ),
         ),
+        buildCodeAssets: const BuildCodeAssetsOptions(appBuildDirectory: null),
+        buildDataAssets: true,
       );
       expect(
         result.codeAssets.map((FlutterCodeAsset c) => c.codeAsset.file!.toString()).toList()
@@ -237,4 +244,107 @@ void main() {
       );
     },
   );
+
+  testUsingContext(
+    'unit tests does not require compiler toolchain',
+    overrides: <Type, Generator>{
+      ProcessManager: () {
+        const Platform platform = LocalPlatform();
+        return FakeProcessManager.list([
+          if (platform.isMacOS)
+            for (final binary in <String>['clang', 'ar', 'ld'])
+              FakeCommand(
+                command: <Pattern>['xcrun', '--find', binary],
+                exitCode: 1,
+                stderr: 'not found',
+              ),
+          if (platform.isLinux)
+            const FakeCommand(
+              command: <Pattern>['which', 'clang++'],
+              exitCode: 1,
+              stderr: 'not found',
+            ),
+        ]);
+      },
+    },
+    () async {
+      // This calls setCCompilerConfig() on a test target, which must not throw despite the
+      // toolchain not being available.
+      const Platform platform = LocalPlatform();
+      if (!platform.isLinux && !platform.isMacOS) {
+        return false;
+      }
+
+      final target = _SetCCompilerConfigTarget(
+        packagesWithNativeAssetsResult: <String>['bar'],
+        buildResult: FakeFlutterNativeAssetsBuilderResult.fromAssets(),
+      );
+
+      await runFlutterSpecificHooks(
+        environmentDefines: {},
+        targetPlatform: TargetPlatform.tester,
+        projectUri: projectUri,
+        fileSystem: fileSystem,
+        buildRunner: target,
+        buildCodeAssets: BuildCodeAssetsOptions(
+          appBuildDirectory: fileSystem.directory(projectUri),
+        ),
+        buildDataAssets: true,
+      );
+
+      expect(target.didSetCCompilerConfig, isTrue);
+    },
+  );
+
+  testUsingContext(
+    'linux build reads compilers from CMakeCache.txt',
+    overrides: <Type, Generator>{
+      ProcessManager: () => FakeProcessManager.empty(),
+      FileSystem: () => fileSystem,
+    },
+    () async {
+      final target = _SetCCompilerConfigTarget(
+        packagesWithNativeAssetsResult: <String>['bar'],
+        buildResult: FakeFlutterNativeAssetsBuilderResult.fromAssets(),
+      );
+
+      await fileSystem.directory('/usr/bin/').create(recursive: true);
+      await fileSystem.file('/usr/bin/ld.ldd').create();
+      await fileSystem.file('/usr/bin/llvm-ar').create();
+      await fileSystem.file('/usr/bin/clang').create();
+      await fileSystem.file('/usr/bin/clang++').create();
+
+      final Directory project = fileSystem.directory(projectUri);
+      await project.childDirectory('build/linux/arm64/release').create(recursive: true);
+      await project.childFile('build/linux/arm64/release/CMakeCache.txt').writeAsString('''
+CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/clang++
+CMAKE_AR:FILEPATH=/usr/bin/llvm-ar
+CMAKE_LINKER:FILEPATH=/usr/bin/ld.ldd
+''');
+
+      await runFlutterSpecificHooks(
+        environmentDefines: {kBuildMode: 'release'},
+        targetPlatform: TargetPlatform.linux_arm64,
+        projectUri: projectUri,
+        fileSystem: fileSystem,
+        buildRunner: target,
+        buildCodeAssets: BuildCodeAssetsOptions(appBuildDirectory: project.childDirectory('build')),
+        buildDataAssets: false,
+      );
+
+      expect(target.didSetCCompilerConfig, isTrue);
+    },
+  );
+}
+
+class _SetCCompilerConfigTarget extends FakeFlutterNativeAssetsBuildRunner {
+  _SetCCompilerConfigTarget({super.buildResult, super.packagesWithNativeAssetsResult});
+
+  bool didSetCCompilerConfig = false;
+
+  @override
+  Future<void> setCCompilerConfig(CodeAssetTarget target) async {
+    await target.setCCompilerConfig();
+    didSetCCompilerConfig = true;
+  }
 }

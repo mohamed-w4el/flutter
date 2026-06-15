@@ -29,10 +29,6 @@ class BundleBuilder {
   ///
   /// The default `mainPath` is `lib/main.dart`.
   /// The default `manifestPath` is `pubspec.yaml`.
-  ///
-  /// If [buildNativeAssets], native assets are built and the mapping for native
-  /// assets lookup at runtime is embedded in the kernel file, otherwise an
-  /// empty native assets mapping is embedded in the kernel file.
   Future<void> build({
     required TargetPlatform platform,
     required BuildInfo buildInfo,
@@ -42,7 +38,6 @@ class BundleBuilder {
     String? applicationKernelFilePath,
     String? depfilePath,
     String? assetDirPath,
-    bool buildNativeAssets = true,
     @visibleForTesting BuildSystem? buildSystem,
   }) async {
     project ??= FlutterProject.current();
@@ -68,7 +63,6 @@ class BundleBuilder {
         kTargetFile: mainPath,
         kDeferredComponents: 'false',
         ...buildInfo.toBuildSystemEnvironment(),
-        if (!buildNativeAssets) kNativeAssets: 'false',
       },
       artifacts: globals.artifacts!,
       fileSystem: globals.fs,
@@ -114,7 +108,7 @@ Future<AssetBundle?> buildAssets({
   required String manifestPath,
   String? assetDirPath,
   required String packageConfigPath,
-  TargetPlatform? targetPlatform,
+  required TargetPlatform targetPlatform,
   String? flavor,
 }) async {
   assetDirPath ??= getAssetBuildDirectory();
@@ -211,8 +205,27 @@ Future<void> writeBundle(
             case AssetKind.font:
               break;
             case AssetKind.shader:
+              var inputToCompiler = input;
+              if (entry.value.transformers.isNotEmpty) {
+                final transformedShaderSourcePath = '${file.path}.transformed';
+                final AssetTransformationFailure? failure = await assetTransformer.transformAsset(
+                  asset: inputToCompiler,
+                  outputPath: transformedShaderSourcePath,
+                  workingDirectory: projectDir.path,
+                  transformerEntries: entry.value.transformers,
+                  logger: logger,
+                );
+                if (failure != null) {
+                  throwToolExit(
+                    'User-defined transformation of shader "${entry.key}" failed.\n'
+                    '${failure.message}',
+                  );
+                }
+                inputToCompiler = fileSystem.file(transformedShaderSourcePath);
+              }
+
               doCopy = !await shaderCompiler.compileShader(
-                input: input,
+                input: inputToCompiler,
                 outputPath: file.path,
                 targetPlatform: targetPlatform,
               );

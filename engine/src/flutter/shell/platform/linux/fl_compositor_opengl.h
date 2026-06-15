@@ -9,7 +9,9 @@
 
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/linux/fl_compositor.h"
-#include "flutter/shell/platform/linux/public/flutter_linux/fl_engine.h"
+#include "flutter/shell/platform/linux/fl_framebuffer.h"
+#include "flutter/shell/platform/linux/fl_opengl_manager.h"
+#include "flutter/shell/platform/linux/fl_task_runner.h"
 
 G_BEGIN_DECLS
 
@@ -27,36 +29,18 @@ G_DECLARE_FINAL_TYPE(FlCompositorOpenGL,
 
 /**
  * fl_compositor_opengl_new:
- * @engine: an #FlEngine.
- * @context: the OpenGL context that is being rendered into.
+ * @task_runner: an #FlTaskRunnner.
+ * @opengl_manager: an #FlOpenGLManager
+ * @shareable: %TRUE if the can use a framebuffer that is shared between
+ * contexts.
  *
  * Creates a new OpenGL compositor.
  *
  * Returns: a new #FlCompositorOpenGL.
  */
-FlCompositorOpenGL* fl_compositor_opengl_new(FlEngine* engine,
-                                             GdkGLContext* context);
-
-/**
- * fl_compositor_opengl_render:
- * @compositor: an #FlCompositorOpenGL.
- * @width: width of the window in pixels.
- * @height: height of the window in pixels.
- *
- * Performs OpenGL commands to render current Flutter view.
- */
-void fl_compositor_opengl_render(FlCompositorOpenGL* compositor,
-                                 int width,
-                                 int height);
-
-/**
- * fl_compositor_opengl_cleanup:
- * @compositor: an #FlCompositorOpenGL.
- *
- * Removes OpenGL resources used for rendering. Requires an active
- * context.
- */
-void fl_compositor_opengl_cleanup(FlCompositorOpenGL* compositor);
+FlCompositorOpenGL* fl_compositor_opengl_new(FlTaskRunner* task_runner,
+                                             FlOpenGLManager* opengl_manager,
+                                             gboolean shareable);
 
 G_END_DECLS
 

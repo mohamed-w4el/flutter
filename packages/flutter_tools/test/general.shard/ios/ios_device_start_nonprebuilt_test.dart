@@ -12,6 +12,7 @@ import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/os.dart';
 import 'package:flutter_tools/src/base/platform.dart';
+import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -39,8 +40,22 @@ import '../../src/fakes.dart';
 import '../../src/package_config.dart';
 import '../../src/throwing_pub.dart';
 
-List<String> _xattrArgs(FlutterProject flutterProject) {
-  return <String>['xattr', '-r', '-d', 'com.apple.FinderInfo', flutterProject.directory.path];
+// Helper to generate xattr commands for removing specific extended attributes
+List<FakeCommand> xattrCommands(FlutterProject flutterProject) {
+  return <FakeCommand>[
+    FakeCommand(
+      command: <String>['xattr', '-r', '-d', 'com.apple.FinderInfo', flutterProject.directory.path],
+    ),
+    FakeCommand(
+      command: <String>['xattr', '-r', '-d', 'com.apple.provenance', flutterProject.directory.path],
+    ),
+  ];
+}
+
+FakeCommand xattrCreatedByBuildSystemCommand(String outputDirPath) {
+  return FakeCommand(
+    command: <String>['xattr', '-w', 'com.apple.xcode.CreatedByBuildSystem', 'true', outputDirPath],
+  );
 }
 
 const kRunReleaseArgs = <String>[
@@ -135,7 +150,7 @@ void main() {
           'My Super Awesome App',
         );
 
-        processManager.addCommand(FakeCommand(command: _xattrArgs(flutterProject)));
+        processManager.addCommands(xattrCommands(flutterProject));
         processManager.addCommand(const FakeCommand(command: kRunReleaseArgs));
 
         final LaunchResult launchResult = await iosDevice.startApp(
@@ -175,6 +190,7 @@ void main() {
         ),
         Xcode: () => xcode,
         Analytics: () => fakeAnalytics,
+        Artifacts: () => artifacts,
       },
     );
 
@@ -213,6 +229,7 @@ void main() {
         Platform: () => macPlatform,
         XcodeProjectInterpreter: () => FakeXcodeProjectInterpreter(),
         Xcode: () => xcode,
+        Artifacts: () => artifacts,
       },
     );
 
@@ -240,8 +257,9 @@ void main() {
             .directory('build/ios/Release-iphoneos/My Super Awesome App.app')
             .createSync(recursive: true);
 
-        processManager.addCommand(FakeCommand(command: _xattrArgs(flutterProject)));
+        processManager.addCommands(xattrCommands(flutterProject));
         processManager.addCommand(const FakeCommand(command: kRunReleaseArgs));
+        processManager.addCommand(xattrCreatedByBuildSystemCommand('build/ios/Release-iphoneos'));
         processManager.addCommand(
           const FakeCommand(
             command: <String>[
@@ -298,6 +316,7 @@ void main() {
         Platform: () => macPlatform,
         XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
         Xcode: () => xcode,
+        Artifacts: () => artifacts,
       },
     );
 
@@ -326,7 +345,7 @@ void main() {
             .directory('build/ios/Release-iphoneos/My Super Awesome App.app')
             .createSync(recursive: true);
 
-        processManager.addCommand(FakeCommand(command: _xattrArgs(flutterProject)));
+        processManager.addCommands(xattrCommands(flutterProject));
         processManager.addCommand(
           const FakeCommand(
             command: <String>[
@@ -357,6 +376,7 @@ void main() {
             ],
           ),
         );
+        processManager.addCommand(xattrCreatedByBuildSystemCommand('build/ios/Release-iphoneos'));
         processManager.addCommand(
           const FakeCommand(
             command: <String>[
@@ -413,8 +433,216 @@ void main() {
         Platform: () => macPlatform,
         XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
         Xcode: () => xcode,
+        Artifacts: () => artifacts,
       },
     );
+
+    group('with Xcode 26', () {
+      late Xcode xcode;
+      late FakeXcodeProjectInterpreter fakeXcodeProjectInterpreter;
+      late FakeArtifacts fakeArtifacts;
+
+      setUp(() {
+        fakeXcodeProjectInterpreter = FakeXcodeProjectInterpreter(
+          projectInfo: projectInfo,
+          xcodeVersion: Version(26, 0, 0),
+        );
+        xcode = Xcode.test(
+          processManager: FakeProcessManager.any(),
+          xcodeProjectInterpreter: fakeXcodeProjectInterpreter,
+        );
+        fakeArtifacts = FakeArtifacts(
+          frameworkPath: fileSystem.systemTempDirectory.childDirectory('Flutter.framework').path,
+        );
+      });
+
+      testUsingContext(
+        'cleans before build when headers change when incremental build',
+        () async {
+          final IOSDevice iosDevice = setUpIOSDevice(
+            fileSystem: fileSystem,
+            processManager: processManager,
+            logger: logger,
+            artifacts: artifacts,
+          );
+          setUpIOSProject(fileSystem);
+          final FlutterProject flutterProject = FlutterProject.fromDirectory(
+            fileSystem.currentDirectory,
+          );
+          final buildableIOSApp = BuildableIOSApp(
+            flutterProject.ios,
+            'flutter',
+            'My Super Awesome App',
+          );
+          fileSystem
+              .directory('build/ios/Release-iphoneos/My Super Awesome App.app')
+              .createSync(recursive: true);
+          fileSystem.systemTempDirectory
+              .childDirectory('Flutter.framework')
+              .childDirectory('Headers')
+              .childFile('FlutterPlugin.h')
+              .createSync(recursive: true);
+          processManager.addCommands([
+            ...xattrCommands(flutterProject),
+            FakeCommand(
+              command: const <String>[
+                'xcrun',
+                'xcodebuild',
+                '-configuration',
+                'Release',
+                'clean',
+                'build',
+                '-quiet',
+                '-allowProvisioningUpdates',
+                '-allowProvisioningDeviceRegistration',
+                '-workspace',
+                'Runner.xcworkspace',
+                '-scheme',
+                'Runner',
+                'BUILD_DIR=/build/ios',
+                '-sdk',
+                'iphoneos',
+                '-destination',
+                'id=123',
+                'ONLY_ACTIVE_ARCH=NO',
+                'ARCHS=arm64',
+                '-resultBundlePath',
+                '/.tmp_rand0/flutter_ios_build_temp_dirrand0/temporary_xcresult_bundle',
+                '-resultBundleVersion',
+                '3',
+                'FLUTTER_SUPPRESS_ANALYTICS=true',
+                'COMPILER_INDEX_STORE_ENABLE=NO',
+              ],
+              onRun: (command) {
+                expect(
+                  fileSystem
+                      .directory('build/ios/Release-iphoneos/My Super Awesome App.app')
+                      .existsSync(),
+                  isFalse,
+                );
+              },
+            ),
+            xattrCreatedByBuildSystemCommand('build/ios/Release-iphoneos'),
+            FakeCommand(
+              command: <String>[
+                iosDeployPath,
+                '--id',
+                '123',
+                '--bundle',
+                'build/ios/iphoneos/My Super Awesome App.app',
+                '--app_deltas',
+                'build/ios/app-delta',
+                '--no-wifi',
+                '--justlaunch',
+                '--args',
+                const <String>['--enable-dart-profiling'].join(' '),
+              ],
+            ),
+          ]);
+          final LaunchResult launchResult = await iosDevice.startApp(
+            buildableIOSApp,
+            debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
+            platformArgs: <String, Object>{},
+          );
+
+          expect(fileSystem.directory('build/ios/iphoneos'), exists);
+          expect(launchResult.started, true);
+          expect(processManager, hasNoRemainingExpectations);
+        },
+        overrides: <Type, Generator>{
+          ProcessManager: () => processManager,
+          FileSystem: () => fileSystem,
+          Logger: () => logger,
+          OperatingSystemUtils: () =>
+              FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_x64),
+          Pub: () => const ThrowingPub(),
+          Platform: () => macPlatform,
+          XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
+          Xcode: () => xcode,
+          Artifacts: () => fakeArtifacts,
+        },
+      );
+
+      testUsingContext(
+        'cleans before build when headers change when fresh build',
+        () async {
+          final IOSDevice iosDevice = setUpIOSDevice(
+            fileSystem: fileSystem,
+            processManager: processManager,
+            logger: logger,
+            artifacts: artifacts,
+          );
+          setUpIOSProject(fileSystem);
+          final FlutterProject flutterProject = FlutterProject.fromDirectory(
+            fileSystem.currentDirectory,
+          );
+          final buildableIOSApp = BuildableIOSApp(
+            flutterProject.ios,
+            'flutter',
+            'My Super Awesome App',
+          );
+
+          fileSystem.directory('build/ios/iphoneos').deleteSync(recursive: true);
+          fileSystem.systemTempDirectory
+              .childDirectory('Flutter.framework')
+              .childDirectory('Headers')
+              .childFile('FlutterPlugin.h')
+              .createSync(recursive: true);
+          processManager.addCommands([
+            ...xattrCommands(flutterProject),
+            const FakeCommand(
+              command: <String>[
+                'xcrun',
+                'xcodebuild',
+                '-configuration',
+                'Release',
+                '-quiet',
+                '-allowProvisioningUpdates',
+                '-allowProvisioningDeviceRegistration',
+                '-workspace',
+                'Runner.xcworkspace',
+                '-scheme',
+                'Runner',
+                'BUILD_DIR=/build/ios',
+                '-sdk',
+                'iphoneos',
+                '-destination',
+                'id=123',
+                'ONLY_ACTIVE_ARCH=NO',
+                'ARCHS=arm64',
+                '-resultBundlePath',
+                '/.tmp_rand0/flutter_ios_build_temp_dirrand0/temporary_xcresult_bundle',
+                '-resultBundleVersion',
+                '3',
+                'FLUTTER_SUPPRESS_ANALYTICS=true',
+                'COMPILER_INDEX_STORE_ENABLE=NO',
+              ],
+            ),
+            xattrCreatedByBuildSystemCommand('build/ios/Release-iphoneos'),
+          ]);
+
+          await iosDevice.startApp(
+            buildableIOSApp,
+            debuggingOptions: DebuggingOptions.disabled(BuildInfo.release),
+            platformArgs: <String, Object>{},
+          );
+
+          expect(processManager, hasNoRemainingExpectations);
+        },
+        overrides: <Type, Generator>{
+          ProcessManager: () => processManager,
+          FileSystem: () => fileSystem,
+          Logger: () => logger,
+          OperatingSystemUtils: () =>
+              FakeOperatingSystemUtils(hostPlatform: HostPlatform.darwin_x64),
+          Pub: () => const ThrowingPub(),
+          Platform: () => macPlatform,
+          XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
+          Xcode: () => xcode,
+          Artifacts: () => fakeArtifacts,
+        },
+      );
+    });
 
     testUsingContext(
       'with concurrent build failures',
@@ -437,7 +665,7 @@ void main() {
           'My Super Awesome App',
         );
 
-        processManager.addCommand(FakeCommand(command: _xattrArgs(flutterProject)));
+        processManager.addCommands(xattrCommands(flutterProject));
         // The first xcrun call should fail with a
         // concurrent build exception.
         processManager.addCommand(
@@ -448,6 +676,7 @@ void main() {
           ),
         );
         processManager.addCommand(const FakeCommand(command: kRunReleaseArgs));
+        processManager.addCommand(xattrCreatedByBuildSystemCommand('build/ios/Release-iphoneos'));
         processManager.addCommand(
           FakeCommand(
             command: <String>[
@@ -510,6 +739,7 @@ void main() {
         Pub: () => const ThrowingPub(),
         XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
         Xcode: () => xcode,
+        Artifacts: () => artifacts,
       },
     );
   });
@@ -531,7 +761,11 @@ void main() {
       ], logger);
       fakeXcodeProjectInterpreter = FakeXcodeProjectInterpreter(
         projectInfo: projectInfo,
+<<<<<<< HEAD
         xcodeVersion: Version(15, 0, 0),
+=======
+        xcodeVersion: Version(16, 0, 0),
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
       );
       xcode = Xcode.test(
         processManager: FakeProcessManager.any(),
@@ -592,6 +826,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -648,6 +883,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -694,6 +930,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -752,6 +989,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
     });
@@ -832,6 +1070,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -843,7 +1082,10 @@ void main() {
             <String>['Runner', 'free'],
             logger,
           );
-          fakeXcodeProjectInterpreter = FakeXcodeProjectInterpreter(projectInfo: projectInfo);
+          fakeXcodeProjectInterpreter = FakeXcodeProjectInterpreter(
+            projectInfo: projectInfo,
+            xcodeVersion: Version(16, 0, 0),
+          );
           xcode = Xcode.test(
             processManager: FakeProcessManager.any(),
             xcodeProjectInterpreter: fakeXcodeProjectInterpreter,
@@ -928,6 +1170,7 @@ void main() {
             Platform: () => macPlatform,
             XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
             Xcode: () => xcode,
+            Artifacts: () => artifacts,
           },
         );
       });
@@ -1024,6 +1267,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -1078,6 +1322,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => FakeXcodeProjectInterpreter(),
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -1133,6 +1378,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
 
@@ -1196,6 +1442,7 @@ void main() {
           Platform: () => macPlatform,
           XcodeProjectInterpreter: () => fakeXcodeProjectInterpreter,
           Xcode: () => xcode,
+          Artifacts: () => artifacts,
         },
       );
     });
@@ -1222,6 +1469,12 @@ name: my_app
   schemeFile.writeAsStringSync(_validScheme);
   // This is the expected output directory.
   fileSystem.directory('build/ios/iphoneos/My Super Awesome App.app').createSync(recursive: true);
+
+  // Create a dummy Info.plist with `UIApplicationSceneManifest` to spoof that the project has
+  // migrated to UIScene and avoid UIScene errors.
+  fileSystem.file('ios/Runner/Info.plist')
+    ..createSync(recursive: true)
+    ..writeAsStringSync('UIApplicationSceneManifest');
 }
 
 IOSDevice setUpIOSDevice({
@@ -1305,12 +1558,24 @@ class FakeXcodeProjectInterpreter extends Fake implements XcodeProjectInterprete
   List<String> xcrunCommand() => <String>['xcrun'];
 
   @override
-  Future<XcodeProjectInfo?> getInfo(String projectPath, {String? projectFilename}) async =>
-      projectInfo;
+  Future<List<String>> fetchDependenciesAndGenerateXcodebuildArgs(
+    XcodeBasedProject xcodeProject,
+    Directory buildDirectory, {
+    bool skipPackageUpdatesAndValidation = true,
+  }) async {
+    return <String>['xcrun', 'xcodebuild'];
+  }
+
+  @override
+  Future<XcodeProjectInfo?> getInfo(
+    XcodeBasedProject xcodeProject, {
+    String? projectFilename,
+    required Directory buildDirectory,
+  }) async => projectInfo;
 
   @override
   Future<Map<String, String>> getBuildSettings(
-    String projectPath, {
+    XcodeBasedProject xcodeProject, {
     required XcodeProjectBuildContext buildContext,
     Duration timeout = const Duration(minutes: 1),
   }) async => buildSettings;
@@ -1375,8 +1640,14 @@ class FakeIOSCoreDeviceControl extends Fake implements IOSCoreDeviceControl {
   List<String>? get argumentsUsedForLaunch => _launchArguments;
 
   @override
-  Future<bool> installApp({required String deviceId, required String bundlePath}) async {
-    return installSuccess;
+  Future<(bool, IOSCoreDeviceInstallResult?)> installApp({
+    required String deviceId,
+    required String bundlePath,
+  }) async {
+    final result = IOSCoreDeviceInstallResult.fromJson(<String, Object?>{
+      'info': <String, Object?>{'outcome': installSuccess ? 'success' : 'failure'},
+    });
+    return (installSuccess, result);
   }
 
   @override
@@ -1480,6 +1751,11 @@ class FakeIOSCoreDeviceLauncher extends Fake implements IOSCoreDeviceLauncher {
     required String bundlePath,
     required String bundleId,
     required List<String> launchArguments,
+<<<<<<< HEAD
+=======
+    required BuildMode mode,
+    required ShutdownHooks shutdownHooks,
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
   }) async {
     return true;
   }
@@ -1493,3 +1769,24 @@ class FakeExactAnalytics extends Fake implements Analytics {
     sentEvents.add(event);
   }
 }
+<<<<<<< HEAD
+=======
+
+class FakeArtifacts extends Fake implements Artifacts {
+  FakeArtifacts({required this.frameworkPath});
+
+  final String frameworkPath;
+  @override
+  String getArtifactPath(
+    Artifact artifact, {
+    TargetPlatform? platform,
+    BuildMode? mode,
+    EnvironmentType? environmentType,
+  }) {
+    return frameworkPath;
+  }
+
+  @override
+  LocalEngineInfo? get localEngineInfo => null;
+}
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020

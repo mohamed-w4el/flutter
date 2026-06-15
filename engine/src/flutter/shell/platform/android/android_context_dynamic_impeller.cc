@@ -11,6 +11,8 @@
 #include "flutter/impeller/base/validation.h"
 #include "shell/platform/android/android_rendering_selector.h"
 
+namespace fs = std::filesystem;
+
 namespace flutter {
 
 namespace {
@@ -35,11 +37,35 @@ static constexpr const char* kBadSocs[] = {
     // `exynos9820` and `exynos9825` have graphical errors:
     // https://github.com/flutter/flutter/issues/171992.
     "exynos9820",  //
+<<<<<<< HEAD
     "exynos9825"   //
+=======
+    "exynos9825",  //
+    "rk30sdk"      // https://github.com/flutter/flutter/issues/183510
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 };
 
-static bool IsDeviceEmulator(std::string_view product_model) {
-  return std::string(product_model).find("gphone") != std::string::npos;
+static bool IsDeviceEmulator() {
+  char property[PROP_VALUE_MAX];
+
+  __system_property_get("ro.hardware", property);
+  std::string_view hardware_prop(property);
+  if (hardware_prop == "goldfish" || hardware_prop == "ranchu" ||
+      hardware_prop == "qemu") {
+    return true;
+  }
+
+  __system_property_get("ro.product.model", property);
+  std::string_view model_prop(property);
+  if (model_prop.find("gphone") != std::string::npos) {
+    return true;
+  }
+
+  if (::access("/dev/qemu_pipe", F_OK) == 0) {
+    return true;
+  }
+
+  return false;
 }
 
 static bool IsKnownBadSOC(std::string_view hardware) {
@@ -64,15 +90,14 @@ GetActualRenderingAPIForImpeller(
   // Even if this check returns true, Impeller may determine it cannot use
   // Vulkan for some other reason, such as a missing required extension or
   // feature. In these cases it will use OpenGLES.
-  char product_model[PROP_VALUE_MAX];
-  __system_property_get("ro.product.model", product_model);
-  if (IsDeviceEmulator(product_model)) {
+  if (IsDeviceEmulator()) {
     // Avoid using Vulkan on known emulators.
     return nullptr;
   }
 
-  __system_property_get("ro.com.google.clientidbase", product_model);
-  if (strcmp(product_model, kAndroidHuawei) == 0) {
+  char property[PROP_VALUE_MAX];
+  __system_property_get("ro.com.google.clientidbase", property);
+  if (strcmp(property, kAndroidHuawei) == 0) {
     // Avoid using Vulkan on Huawei as AHB imports do not
     // consistently work.
     return nullptr;
@@ -85,8 +110,13 @@ GetActualRenderingAPIForImpeller(
     return nullptr;
   }
 
+<<<<<<< HEAD
   __system_property_get("ro.product.board", product_model);
   if (IsKnownBadSOC(product_model)) {
+=======
+  __system_property_get("ro.product.board", property);
+  if (IsKnownBadSOC(property)) {
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
     FML_LOG(INFO)
         << "Known bad Vulkan driver encountered, falling back to OpenGLES.";
     return nullptr;
@@ -106,7 +136,6 @@ GetActualRenderingAPIForImpeller(
           .enable_surface_control = settings.enable_surface_control,
           .impeller_flags =
               {
-                  .lazy_shader_mode = settings.impeller_flags.lazy_shader_mode,
                   .antialiased_lines =
                       settings.impeller_flags.antialiased_lines,
               },

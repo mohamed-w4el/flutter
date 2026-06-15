@@ -16,6 +16,10 @@ import '../base/io.dart';
 import '../base/logger.dart';
 import '../base/process.dart';
 import '../base/template.dart';
+<<<<<<< HEAD
+=======
+import '../base/utils.dart';
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 import '../build_info.dart';
 import '../convert.dart';
 import '../macos/xcode.dart';
@@ -106,36 +110,34 @@ class XcodeDebug {
       ]);
 
       final stdoutBuffer = StringBuffer();
-      stdoutSubscription = startDebugActionProcess!.stdout
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter())
-          .listen((String line) {
-            _logger.printTrace(line);
-            stdoutBuffer.write(line);
-          });
+      stdoutSubscription = startDebugActionProcess!.stdout.transform(utf8LineDecoder).listen((
+        String line,
+      ) {
+        _logger.printTrace(line);
+        stdoutBuffer.write(line);
+      });
 
       final stderrBuffer = StringBuffer();
       var permissionWarningPrinted = false;
       // console.log from the script are found in the stderr
-      stderrSubscription = startDebugActionProcess!.stderr
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter())
-          .listen((String line) {
-            _logger.printTrace('stderr: $line');
-            stderrBuffer.write(line);
+      stderrSubscription = startDebugActionProcess!.stderr.transform(utf8LineDecoder).listen((
+        String line,
+      ) {
+        _logger.printTrace('stderr: $line');
+        stderrBuffer.write(line);
 
-            // This error may occur if Xcode automation has not been allowed.
-            // Example: Failed to get workspace: Error: An error occurred.
-            if (!permissionWarningPrinted &&
-                line.contains('Failed to get workspace') &&
-                line.contains('An error occurred')) {
-              _logger.printError(
-                'There was an error finding the project in Xcode. Ensure permission '
-                'has been given to control Xcode in Settings > Privacy & Security > Automation.',
-              );
-              permissionWarningPrinted = true;
-            }
-          });
+        // This error may occur if Xcode automation has not been allowed.
+        // Example: Failed to get workspace: Error: An error occurred.
+        if (!permissionWarningPrinted &&
+            line.contains('Failed to get workspace') &&
+            line.contains('An error occurred')) {
+          _logger.printError(
+            'There was an error finding the project in Xcode. Ensure permission '
+            'has been given to control Xcode in Settings > Privacy & Security > Automation.',
+          );
+          permissionWarningPrinted = true;
+        }
+      });
 
       final int exitCode = await startDebugActionProcess!.exitCode.whenComplete(() async {
         await stdoutSubscription?.cancel();
@@ -410,6 +412,7 @@ class XcodeDebug {
     final String schemeXml = schemeFile.readAsStringSync();
     try {
       final document = XmlDocument.parse(schemeXml);
+      // ignore: experimental_member_use
       final Iterable<XmlNode> nodes = document.xpath('/Scheme/LaunchAction');
       if (nodes.isEmpty) {
         _logger.printError('Failed to find LaunchAction for the Scheme in ${schemeFile.path}.');

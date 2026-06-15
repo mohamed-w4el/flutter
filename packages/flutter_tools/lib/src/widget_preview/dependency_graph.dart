@@ -10,9 +10,10 @@ import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
-import 'package:analyzer/dart/element/element2.dart';
+import 'package:analyzer/dart/constant/value.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/diagnostic/diagnostic.dart';
-import 'package:analyzer/error/error.dart';
+import 'package:analyzer/source/line_info.dart';
 
 import '../base/logger.dart';
 import 'preview_details.dart';
@@ -32,7 +33,7 @@ typedef PreviewDependencyGraph = Map<PreviewPath, LibraryPreviewNode>;
 /// Visitor which detects previews and extracts [PreviewDetails] for later code
 /// generation.
 class _PreviewVisitor extends RecursiveAstVisitor<void> {
-  _PreviewVisitor({required LibraryElement2 lib})
+  _PreviewVisitor({required LibraryElement lib})
     : packageName = lib.uri.scheme == 'package' ? lib.uri.pathSegments.first : null;
 
   late final String? packageName;
@@ -42,7 +43,15 @@ class _PreviewVisitor extends RecursiveAstVisitor<void> {
   FunctionDeclaration? _currentFunction;
   ConstructorDeclaration? _currentConstructor;
   MethodDeclaration? _currentMethod;
-  PreviewDetails? _currentPreview;
+
+  late Uri _currentScriptUri;
+  late CompilationUnit _currentUnit;
+
+  void findPreviewsInResolvedUnitResult(ResolvedUnitResult unit) {
+    _currentScriptUri = unit.file.toUri();
+    _currentUnit = unit.unit;
+    _currentUnit.visitChildren(this);
+  }
 
   /// Handles previews defined on top-level functions.
   @override
@@ -76,6 +85,7 @@ class _PreviewVisitor extends RecursiveAstVisitor<void> {
 
   bool hasRequiredParams(FormalParameterList? params) {
     return params?.parameters.any((p) => p.isRequired) ?? false;
+<<<<<<< HEAD
   }
 
   @override
@@ -117,12 +127,82 @@ class _PreviewVisitor extends RecursiveAstVisitor<void> {
       previewEntries.add(_currentPreview!);
       _currentPreview = null;
     }
+=======
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
   }
 
   @override
-  void visitNamedExpression(NamedExpression node) {
-    // Extracts named properties from the @Preview annotation.
-    _currentPreview?.setField(node: node);
+  void visitAnnotation(Annotation node) {
+    final bool isMultiPreview = node.isMultiPreview;
+    // Skip non-preview annotations.
+    if (!node.isPreview && !isMultiPreview) {
+      return;
+    }
+    // The preview annotations must only have constant arguments.
+    final DartObject? preview = node.elementAnnotation!.computeConstantValue();
+    if (preview == null) {
+      return;
+    }
+    final LineInfo lineInfo = _currentUnit.lineInfo;
+    final CharacterLocation location = lineInfo.getLocation(node.offset);
+    final int line = location.lineNumber;
+    final int column = location.columnNumber;
+    if (_currentFunction != null &&
+        !hasRequiredParams(_currentFunction!.functionExpression.parameters)) {
+      final TypeAnnotation? returnTypeAnnotation = _currentFunction!.returnType;
+      if (returnTypeAnnotation is NamedType) {
+        final Token returnType = returnTypeAnnotation.name;
+        if (returnType.isWidget || returnType.isWidgetBuilder) {
+          previewEntries.add(
+            PreviewDetails(
+              scriptUri: _currentScriptUri,
+              line: line,
+              column: column,
+              packageName: packageName,
+              functionName: _currentFunction!.name.toString(),
+              isBuilder: returnType.isWidgetBuilder,
+              previewAnnotation: preview,
+              isMultiPreview: isMultiPreview,
+            ),
+          );
+        }
+      }
+    } else if (_currentConstructor != null && !hasRequiredParams(_currentConstructor!.parameters)) {
+      final SimpleIdentifier returnType = _currentConstructor!.typeName!;
+      final Token? name = _currentConstructor!.name;
+      previewEntries.add(
+        PreviewDetails(
+          scriptUri: _currentScriptUri,
+          line: line,
+          column: column,
+          packageName: packageName,
+          functionName: '$returnType${name == null ? '' : '.$name'}',
+          isBuilder: false,
+          previewAnnotation: preview,
+          isMultiPreview: isMultiPreview,
+        ),
+      );
+    } else if (_currentMethod != null && !hasRequiredParams(_currentMethod!.parameters)) {
+      final TypeAnnotation? returnTypeAnnotation = _currentMethod!.returnType;
+      if (returnTypeAnnotation is NamedType) {
+        final Token returnType = returnTypeAnnotation.name;
+        if (returnType.isWidget || returnType.isWidgetBuilder) {
+          final parentClass = _currentMethod!.parent!.parent! as ClassDeclaration;
+          previewEntries.add(
+            PreviewDetails(
+              scriptUri: _currentScriptUri,
+              line: line,
+              column: column,
+              packageName: packageName,
+              functionName: '${parentClass.namePart.typeName}.${_currentMethod!.name}',
+              isBuilder: returnType.isWidgetBuilder,
+              previewAnnotation: preview,
+              isMultiPreview: isMultiPreview,
+            ),
+          );
+        }
+      }
+    }
   }
 
   void _scopedVisitChildren<T extends AstNode>(T node, void Function(T?) setter) {
@@ -134,7 +214,7 @@ class _PreviewVisitor extends RecursiveAstVisitor<void> {
 
 /// Contains all the information related to a library being watched by [PreviewDetector].
 final class LibraryPreviewNode {
-  LibraryPreviewNode({required LibraryElement2 library, required this.logger})
+  LibraryPreviewNode({required LibraryElement library, required this.logger})
     : path = library.toPreviewPath() {
     final libraryFilePaths = <String>[
       for (final LibraryFragment fragment in library.fragments) fragment.source.fullName,
@@ -165,13 +245,13 @@ final class LibraryPreviewNode {
   /// transitive dependency outside the previewed project (e.g., in a path or Git dependency, or
   /// a modified package).
   // TODO(bkonyi): determine how to best handle compile time errors in non-analyzed dependencies.
-  var dependencyHasErrors = false;
+  bool dependencyHasErrors = false;
 
   /// `true` if this library contains compile time errors.
   bool get hasErrors => errors.isNotEmpty;
 
   /// The set of errors found in this library.
-  final errors = <AnalysisError>[];
+  final errors = <Diagnostic>[];
 
   /// Determines the set of errors found in this library.
   ///
@@ -179,21 +259,26 @@ final class LibraryPreviewNode {
   Future<void> populateErrors({required AnalysisContext context}) async {
     errors.clear();
     for (final String file in files) {
-      errors.addAll(
-        ((await context.currentSession.getErrors(file)) as ErrorsResult).errors
-            .where((AnalysisError error) => error.severity == Severity.error)
-            .toList(),
-      );
+      final SomeErrorsResult errorsResult = await context.currentSession.getErrors(file);
+      // If errorsResult isn't an ErrorsResult, the analysis context has likely been disposed and
+      // we're in the process of shutting down. Ignore those results.
+      if (errorsResult is ErrorsResult) {
+        errors.addAll(
+          errorsResult.diagnostics.where((error) => error.severity == Severity.error).toList(),
+        );
+      }
     }
   }
 
   /// Finds all previews defined in the [lib] and adds them to [previews].
   void findPreviews({required ResolvedLibraryResult lib}) {
     // Iterate over the compilation unit's AST to find previews.
-    final visitor = _PreviewVisitor(lib: lib.element2);
-    for (final ResolvedUnitResult libUnit in lib.units) {
-      libUnit.unit.visitChildren(visitor);
+    final visitor = _PreviewVisitor(lib: lib.element);
+    // Previews can only be defined under the lib/ directory.
+    if (visitor.packageName == null) {
+      return;
     }
+    lib.units.forEach(visitor.findPreviewsInResolvedUnitResult);
     previews
       ..clear()
       ..addAll(visitor.previewEntries);
@@ -212,13 +297,13 @@ final class LibraryPreviewNode {
 
     for (final unit in units) {
       final LibraryFragment fragment = unit.libraryFragment;
-      for (final LibraryImport importedLib in fragment.libraryImports2) {
-        if (importedLib.importedLibrary2 == null) {
+      for (final LibraryImport importedLib in fragment.libraryImports) {
+        if (importedLib.importedLibrary == null) {
           // This is an import for a file that's not analyzed (likely an import of a package from
           // the pub-cache) and isn't necessary to track as part of the dependency graph.
           continue;
         }
-        final LibraryElement2 importedLibrary = importedLib.importedLibrary2!;
+        final LibraryElement importedLibrary = importedLib.importedLibrary!;
         final LibraryPreviewNode result = graph.putIfAbsent(
           importedLibrary.toPreviewPath(),
           () => LibraryPreviewNode(library: importedLibrary, logger: logger),

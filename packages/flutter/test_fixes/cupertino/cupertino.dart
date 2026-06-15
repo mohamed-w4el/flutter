@@ -295,4 +295,25 @@ void main() {
     context: context,
     pageBuilder: (BuildContext context) => Container(),
   );
+
+  // https://github.com/flutter/flutter/pull/171160
+  CupertinoDynamicColor dynamicColor = CupertinoDynamicColor.withBrightness(
+    color: Color(0xFF000000),
+    darkColor: Color(0xFF000001),
+  );
+  dynamicColor.opacity;
+  dynamicColor.value;
+  dynamicColor = dynamicColor.withOpacity(0.55);
+
+  // Changes made in https://github.com/flutter/flutter/pull/177337
+  showCupertinoSheet(
+    context: context,
+    builder: (BuildContext context) => Container(),
+  );
+
+  // Changes made in https://github.com/flutter/flutter/pull/177337
+  CupertinoSheetRoute<void>(
+    context: context,
+    builder: (BuildContext context) => Container(),
+  );
 }

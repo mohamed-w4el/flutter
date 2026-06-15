@@ -304,13 +304,17 @@ FlutterProject setupProjectUnderTest(Directory currentDirectory, bool setupXcode
 
 class FakeXcodeProjectInterpreter extends Fake implements XcodeProjectInterpreter {
   @override
-  var isInstalled = true;
+  bool isInstalled = true;
 
   @override
-  var version = Version(0, 0, 0);
+  Version version = Version(0, 0, 0);
 
   @override
-  Future<XcodeProjectInfo> getInfo(String projectPath, {String? projectFilename}) async {
+  Future<XcodeProjectInfo> getInfo(
+    XcodeBasedProject xcodeProject, {
+    String? projectFilename,
+    required Directory buildDirectory,
+  }) async {
     return XcodeProjectInfo(const <String>[], const <String>[], <String>[
       'Runner',
       'custom-scheme',
@@ -320,7 +324,13 @@ class FakeXcodeProjectInterpreter extends Fake implements XcodeProjectInterprete
   final workspaces = <CleanWorkspaceCall>[];
 
   @override
-  Future<void> cleanWorkspace(String workspacePath, String scheme, {bool verbose = false}) async {
+  Future<void> cleanWorkspace(
+    XcodeBasedProject xcodeProject,
+    String workspacePath,
+    String scheme, {
+    required Directory buildDirectory,
+    bool verbose = false,
+  }) async {
     workspaces.add(CleanWorkspaceCall(workspacePath, scheme, verbose));
     return;
   }

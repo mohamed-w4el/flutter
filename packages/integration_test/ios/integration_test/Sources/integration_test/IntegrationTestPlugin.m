@@ -15,6 +15,7 @@ static NSString *const kMethodRevertImage = @"revertFlutterImage";
 @interface IntegrationTestPlugin ()
 
 @property(nonatomic, readwrite) NSDictionary<NSString *, NSString *> *testResults;
+@property(nonatomic, weak) NSObject<FlutterPluginRegistrar> *registrar;
 
 - (instancetype)init NS_DESIGNATED_INITIALIZER;
 
@@ -45,9 +46,12 @@ static NSString *const kMethodRevertImage = @"revertFlutterImage";
 }
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar> *)registrar {
+  IntegrationTestPlugin *instance = [self instance];
+  instance.registrar = registrar;
   FlutterMethodChannel *channel = [FlutterMethodChannel methodChannelWithName:kIntegrationTestPluginChannel
                                                               binaryMessenger:registrar.messenger];
-  [registrar addMethodCallDelegate:[self instance] channel:channel];
+  [registrar addMethodCallDelegate:instance channel:channel];
+  [registrar addSceneDelegate:instance];
 }
 
 /// Handle method calls from Dart code:
@@ -78,6 +82,7 @@ static NSString *const kMethodRevertImage = @"revertFlutterImage";
 }
 
 - (UIImage *)capturePngScreenshot {
+<<<<<<< HEAD
   // Get all windows in the app
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -88,6 +93,14 @@ static NSString *const kMethodRevertImage = @"revertFlutterImage";
 
   // Find the overall bounding rect for all windows
   CGRect screenBounds = [UIScreen mainScreen].bounds;
+=======
+  UIWindowScene *scene = self.registrar.viewController.view.window.windowScene;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  NSArray<UIWindow *> *windows = scene ? scene.windows : [UIApplication sharedApplication].windows;
+  CGRect screenBounds = scene.screen ? scene.screen.bounds : [UIScreen mainScreen].bounds;
+#pragma clang diagnostic pop
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 
   UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithBounds:screenBounds];
   UIImage *screenshot =

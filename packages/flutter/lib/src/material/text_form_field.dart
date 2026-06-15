@@ -4,7 +4,6 @@
 
 import 'dart:ui' as ui show BoxHeightStyle, BoxWidthStyle;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -13,7 +12,6 @@ import 'adaptive_text_selection_toolbar.dart';
 import 'input_decorator.dart';
 import 'material_state.dart';
 import 'text_field.dart';
-import 'theme.dart';
 
 export 'package:flutter/services.dart' show SmartDashesType, SmartQuotesType;
 
@@ -43,7 +41,7 @@ export 'package:flutter/services.dart' show SmartDashesType, SmartQuotesType;
 /// when it is no longer needed. This will ensure any resources used by the object
 /// are discarded.
 ///
-/// By default, `decoration` will apply the [ThemeData.inputDecorationTheme] for
+/// By default, `decoration` will apply the ambient [InputDecorationThemeData] for
 /// the current context to the [InputDecoration], see
 /// [InputDecoration.applyDefaults].
 ///
@@ -207,14 +205,18 @@ class TextFormField extends FormField<String> {
        ),
        assert(!obscureText || maxLines == 1, 'Obscured fields cannot be multiline.'),
        assert(maxLength == null || maxLength == TextField.noMaxLength || maxLength > 0),
+       assert(
+         errorBuilder == null || decoration?.errorText == null,
+         'Declaring both errorBuilder and decoration.errorText is not supported.',
+       ),
        super(
          initialValue: controller != null ? controller.text : (initialValue ?? ''),
          enabled: enabled ?? decoration?.enabled ?? true,
          autovalidateMode: autovalidateMode ?? AutovalidateMode.disabled,
          builder: (FormFieldState<String> field) {
-           final _TextFormFieldState state = field as _TextFormFieldState;
+           final state = field as _TextFormFieldState;
            InputDecoration effectiveDecoration = (decoration ?? const InputDecoration())
-               .applyDefaults(Theme.of(field.context).inputDecorationTheme);
+               .applyDefaults(InputDecorationTheme.of(field.context));
 
            final String? errorText = field.errorText;
            if (errorText != null) {
@@ -331,7 +333,7 @@ class TextFormField extends FormField<String> {
     BuildContext context,
     EditableTextState editableTextState,
   ) {
-    if (defaultTargetPlatform == TargetPlatform.iOS && SystemContextMenu.isSupported(context)) {
+    if (SystemContextMenu.isSupportedByField(editableTextState)) {
       return SystemContextMenu.editableText(editableTextState: editableTextState);
     }
     return AdaptiveTextSelectionToolbar.editableText(editableTextState: editableTextState);
@@ -343,6 +345,7 @@ class TextFormField extends FormField<String> {
 
 class _TextFormFieldState extends FormFieldState<String> {
   RestorableTextEditingController? _controller;
+  late final String? _initialValue;
 
   TextEditingController get _effectiveController => _textFormField.controller ?? _controller!.value;
 
@@ -384,6 +387,7 @@ class _TextFormFieldState extends FormFieldState<String> {
     } else {
       _textFormField.controller!.addListener(_handleControllerChanged);
     }
+    _initialValue = _textFormField.initialValue ?? _textFormField.controller?.text;
   }
 
   @override
@@ -428,7 +432,7 @@ class _TextFormFieldState extends FormFieldState<String> {
   void reset() {
     // Set the controller value before calling super.reset() to let
     // _handleControllerChanged suppress the change.
-    _effectiveController.value = TextEditingValue(text: widget.initialValue ?? '');
+    _effectiveController.value = TextEditingValue(text: _initialValue ?? '');
     super.reset();
     _textFormField.onChanged?.call(_effectiveController.text);
   }

@@ -28,12 +28,15 @@ import '../globals.dart' as globals;
 import '../web/bootstrap.dart';
 import '../web/chrome.dart';
 import '../web/compile.dart';
+import '../web/devfs_config.dart';
+import '../web/devfs_proxy.dart';
 import '../web/memory_fs.dart';
 import '../web/module_metadata.dart';
+import '../web/web_constants.dart';
 import '../web_template.dart';
-
+import 'proxy_middleware.dart';
 import 'release_asset_server.dart';
-import 'web_server_utlities.dart';
+import 'web_server_utilities.dart';
 
 // A minimal index for projects that do not yet support web. A meta tag is used
 // to ensure loaded scripts are always parsed as UTF-8.
@@ -76,7 +79,12 @@ class WebAssetServer implements AssetReader {
     required this.webRenderer,
     required this.useLocalCanvasKit,
     required this.fileSystem,
-  }) : basePath = WebTemplate.baseHref(htmlTemplate(fileSystem, 'index.html', _kDefaultIndex)) {
+    required this.logger,
+    String? baseHref,
+    Map<String, String> webDefines = const <String, String>{},
+  }) : basePath = WebTemplate.baseHref(htmlTemplate(fileSystem, 'index.html', _kDefaultIndex)),
+       _baseHref = baseHref,
+       _webDefines = webDefines {
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
     if (_ddcModuleSystem) {
@@ -95,21 +103,7 @@ class WebAssetServer implements AssetReader {
 
   /// Given a list of [modules] that need to be loaded, compute module names and
   /// digests.
-  ///
-  /// If [writeRestartScripts] is true, writes a list of sources mapped to their
-  /// ids to the file system that can then be consumed by the hot restart
-  /// callback.
-  ///
-  /// For example:
-  /// ```json
-  /// [
-  ///   {
-  ///     "src": "<file_name>",
-  ///     "id": "<id>",
-  ///   },
-  /// ]
-  /// ```
-  void performRestart(List<String> modules, {required bool writeRestartScripts}) {
+  void updateModulesAndDigests(List<String> modules) {
     for (final module in modules) {
       // We skip computing the digest by using the hashCode of the underlying buffer.
       // Whenever a file is updated, the corresponding Uint8List.view it corresponds
@@ -120,22 +114,19 @@ class WebAssetServer implements AssetReader {
       _modules[name] = path;
       _digests[name] = _webMemoryFS.files[moduleName].hashCode.toString();
     }
-    if (writeRestartScripts) {
-      final srcIdsList = <Map<String, String>>[
-        for (final String src in modules) <String, String>{'src': src, 'id': src},
-      ];
-      writeFile('restart_scripts.json', json.encode(srcIdsList));
-    }
   }
 
-  static const _reloadScriptsFileName = 'reload_scripts.json';
+  // Use relative path for the URI so the app can still find it even if it's in
+  // a different domain than the server.
+  @visibleForTesting
+  static Uri reloadedSourcesUri = Uri.parse('reloaded_sources.json');
 
-  /// Given a list of [modules] that need to be reloaded, writes a file that
-  /// contains a list of objects each with three fields:
+  /// Given a list of [modulePaths] that need to be reloaded during a hot
+  /// restart or hot reload, writes a file that contains a list of objects each
+  /// with three fields:
   ///
-  /// `src`: A string that corresponds to the file path containing a DDC library
-  /// bundle. To support embedded libraries, the path should include the
-  /// `baseUri` of the web server.
+  /// `src`: A string that corresponds to the file path relative to the app base
+  /// URL root that contains the DDC library bundle.
   /// `module`: The name of the library bundle in `src`.
   /// `libraries`: An array of strings containing the libraries that were
   /// compiled in `src`.
@@ -144,7 +135,7 @@ class WebAssetServer implements AssetReader {
   /// ```json
   /// [
   ///   {
-  ///     "src": "<baseUri>/<file_name>",
+  ///     "src": "/<file_name>",
   ///     "module": "<module_name>",
   ///     "libraries": ["<lib1>", "<lib2>"],
   ///   },
@@ -153,22 +144,28 @@ class WebAssetServer implements AssetReader {
   ///
   /// The path of the output file should stay consistent across the lifetime of
   /// the app.
-  void performReload(List<String> modules) {
+  void writeReloadedSources(List<String> modulePaths) {
     final moduleToLibrary = <Map<String, Object>>[];
-    for (final module in modules) {
+    for (final relativeModulePath in modulePaths) {
       final metadata = ModuleMetadata.fromJson(
-        json.decode(utf8.decode(_webMemoryFS.metadataFiles['$module.metadata']!.toList()))
+        json.decode(
+              utf8.decode(_webMemoryFS.metadataFiles['$relativeModulePath.metadata']!.toList()),
+            )
             as Map<String, dynamic>,
       );
       final List<String> libraries = metadata.libraries.keys.toList();
-      final moduleUri = baseUri != null ? '$baseUri/$module' : module;
       moduleToLibrary.add(<String, Object>{
-        'src': moduleUri,
+        // Use only the path for the module so the app can still find it even if
+        // it's in a different domain than the server.
+        // TODO(srujzs): We use a `/` prefix to match the path that DWDS gets
+        // when parsing the parsed URL. It may be cleaner to just remove the `/`
+        // in DWDS rather than add it here.
+        'src': '/$relativeModulePath',
         'module': metadata.name,
         'libraries': libraries,
       });
     }
-    writeFile(_reloadScriptsFileName, json.encode(moduleToLibrary));
+    writeFile(reloadedSourcesUri.path, json.encode(moduleToLibrary));
   }
 
   @visibleForTesting
@@ -176,10 +173,10 @@ class WebAssetServer implements AssetReader {
     return _webMemoryFS.write(codeFile, manifestFile, sourcemapFile, metadataFile);
   }
 
-  Uri? get baseUri => _baseUri;
-  Uri? _baseUri;
+  Uri get baseUri => _baseUri;
+  late Uri _baseUri;
 
-  /// Start the web asset server on a [hostname] and [port].
+  /// Start the web asset server with configuration provided by [webDevServerConfig].
   ///
   /// If [testMode] is true, do not actually initialize dwds or the shelf static
   /// server.
@@ -188,20 +185,17 @@ class WebAssetServer implements AssetReader {
   /// trace.
   static Future<WebAssetServer> start(
     ChromiumLauncher? chromiumLauncher,
-    String hostname,
-    int port,
-    String? tlsCertPath,
-    String? tlsCertKeyPath,
     UrlTunneller? urlTunneller,
     bool useSseForDebugProxy,
     bool useSseForDebugBackend,
     bool useSseForInjectedClient,
     BuildInfo buildInfo,
     bool enableDwds,
-    bool enableDds,
+    DartDevelopmentServiceConfiguration ddsConfig,
     Uri entrypoint,
-    ExpressionCompiler? expressionCompiler,
-    Map<String, String> extraHeaders, {
+    ExpressionCompiler? expressionCompiler, {
+    required bool crossOriginIsolation,
+    required WebDevServerConfig webDevServerConfig,
     required WebRendererMode webRenderer,
     required bool isWasm,
     required bool useLocalCanvasKit,
@@ -215,14 +209,21 @@ class WebAssetServer implements AssetReader {
     required Logger logger,
     required Platform platform,
     bool shouldEnableMiddleware = true,
+    Map<String, String> webDefines = const <String, String>{},
   }) async {
+    final String hostname = webDevServerConfig.host;
+    final int port = webDevServerConfig.port;
+    final HttpsConfig? httpsConfig = webDevServerConfig.https;
+    final Map<String, String> extraHeaders = webDevServerConfig.headers;
+    final List<ProxyRule> proxy = webDevServerConfig.proxy;
+
     // TODO(srujzs): Remove this assertion when the library bundle format is
     // supported without canary mode.
     if (ddcModuleSystem) {
       assert(canaryFeatures);
     }
-    InternetAddress address;
-    if (hostname == 'any') {
+    final InternetAddress address;
+    if (hostname == webDevAnyHostDefault) {
       address = InternetAddress.anyIPv4;
     } else {
       address = (await InternetAddress.lookup(hostname)).first;
@@ -231,10 +232,10 @@ class WebAssetServer implements AssetReader {
     const kMaxRetries = 4;
     for (var i = 0; i <= kMaxRetries; i++) {
       try {
-        if (tlsCertPath != null && tlsCertKeyPath != null) {
+        if (httpsConfig != null) {
           final serverContext = SecurityContext()
-            ..useCertificateChain(tlsCertPath)
-            ..usePrivateKey(tlsCertKeyPath);
+            ..useCertificateChain(httpsConfig.certPath)
+            ..usePrivateKey(httpsConfig.certKeyPath);
           httpServer = await HttpServer.bindSecure(address, port, serverContext);
         } else {
           httpServer = await HttpServer.bind(address, port);
@@ -251,6 +252,12 @@ class WebAssetServer implements AssetReader {
 
     // Allow rendering in a iframe.
     httpServer!.defaultResponseHeaders.remove('x-frame-options', 'SAMEORIGIN');
+
+    if (crossOriginIsolation) {
+      for (final MapEntry<String, String> header in kCrossOriginIsolationHeaders.entries) {
+        httpServer.defaultResponseHeaders.add(header.key, header.value);
+      }
+    }
 
     for (final MapEntry<String, String> header in extraHeaders.entries) {
       httpServer.defaultResponseHeaders.add(header.key, header.value);
@@ -270,16 +277,23 @@ class WebAssetServer implements AssetReader {
       webRenderer: webRenderer,
       useLocalCanvasKit: useLocalCanvasKit,
       fileSystem: fileSystem,
+      logger: logger,
+      baseHref: webDevServerConfig.baseHref,
+      webDefines: webDefines,
     );
+    if (webDevServerConfig.baseHref case final String baseHref?) {
+      server.basePath = stripLeadingSlash(baseHref.substring(0, baseHref.length - 1));
+    }
     final int selectedPort = server.selectedPort;
-    var url = '$hostname:$selectedPort';
-    if (hostname == 'any') {
-      url = 'localhost:$selectedPort';
-    }
-    server._baseUri = Uri.http(url, server.basePath);
-    if (tlsCertPath != null && tlsCertKeyPath != null) {
-      server._baseUri = Uri.https(url, server.basePath);
-    }
+
+    final cleanHost = hostname == webDevAnyHostDefault ? 'localhost' : hostname;
+    final scheme = httpsConfig != null ? 'https' : 'http';
+    server._baseUri = Uri(
+      scheme: scheme,
+      host: cleanHost,
+      port: selectedPort,
+      path: server.basePath,
+    );
     if (testMode) {
       return server;
     }
@@ -293,7 +307,7 @@ class WebAssetServer implements AssetReader {
         flutterRoot: Cache.flutterRoot,
         webBuildDirectory: getWebBuildDirectory(),
         basePath: server.basePath,
-        needsCoopCoep: webRenderer == WebRendererMode.skwasm,
+        needsCoopCoep: crossOriginIsolation,
       );
       runZonedGuarded(
         () {
@@ -349,12 +363,10 @@ class WebAssetServer implements AssetReader {
                   appEntrypoint: packageConfig.toPackageUri(
                     fileSystem.file(entrypoint).absolute.uri,
                   ),
+                  canaryFeatures: canaryFeatures,
                 ),
                 packageConfigPath: buildInfo.packageConfigPath,
-                hotReloadSourcesUri: server._baseUri!.replace(
-                  pathSegments: List<String>.from(server._baseUri!.pathSegments)
-                    ..add(_reloadScriptsFileName),
-                ),
+                reloadedSourcesUri: reloadedSourcesUri,
               ).strategy
             : FrontendServerRequireStrategyProvider(
                 ReloadConfiguration.none,
@@ -365,6 +377,7 @@ class WebAssetServer implements AssetReader {
                   appEntrypoint: packageConfig.toPackageUri(
                     fileSystem.file(entrypoint).absolute.uri,
                   ),
+                  canaryFeatures: canaryFeatures,
                 ),
                 packageConfigPath: buildInfo.packageConfigPath,
               ).strategy,
@@ -375,7 +388,7 @@ class WebAssetServer implements AssetReader {
           useSseForDebugBackend: useSseForDebugBackend,
           useSseForInjectedClient: useSseForInjectedClient,
           expressionCompiler: expressionCompiler,
-          spawnDds: enableDds,
+          ddsConfiguration: ddsConfig,
         ),
         appMetadata: AppMetadata(hostname: hostname),
       ),
@@ -386,6 +399,7 @@ class WebAssetServer implements AssetReader {
     if (shouldEnableMiddleware) {
       pipeline = pipeline.addMiddleware(middleware).addMiddleware(dwds.middleware);
     }
+    pipeline = pipeline.addMiddleware(proxyMiddleware(proxy, globals.logger));
     final shelf.Handler dwdsHandler = pipeline.addHandler(server.handleRequest);
     final shelf.Cascade cascade = shelf.Cascade().add(dwds.handler).add(dwdsHandler);
     runZonedGuarded(
@@ -403,6 +417,8 @@ class WebAssetServer implements AssetReader {
 
   final bool _ddcModuleSystem;
   final bool _canaryFeatures;
+  final Map<String, String> _webDefines;
+  final String? _baseHref;
   final HttpServer _httpServer;
   final _webMemoryFS = WebMemoryFS();
   final PackageConfig _packages;
@@ -593,6 +609,7 @@ class WebAssetServer implements AssetReader {
   final bool useLocalCanvasKit;
 
   final FileSystem fileSystem;
+  final Logger logger;
 
   String get _buildConfigString {
     final buildConfig = <String, Object>{
@@ -628,10 +645,12 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
       generateDefaultFlutterBootstrapScript(includeServiceWorkerSettings: false),
     );
     return bootstrapTemplate.withSubstitutions(
-      baseHref: '/',
+      baseHref: _baseHref ?? '/',
       serviceWorkerVersion: null,
       buildConfig: _buildConfigString,
       flutterJsFile: _flutterJsFile,
+      logger: logger,
+      webDefines: _webDefines,
     );
   }
 
@@ -646,13 +665,17 @@ _flutter.buildConfig = ${jsonEncode(buildConfig)};
     final WebTemplate indexHtml = getWebTemplate(fileSystem, 'index.html', _kDefaultIndex);
     return shelf.Response.ok(
       indexHtml.withSubstitutions(
-        // Currently, we don't support --base-href for the "run" command.
-        baseHref: '/',
+        baseHref: _baseHref ?? '/',
+        // Currently, we don't support --static-assets-url for the "run" command.
+        staticAssetsUrl: '/',
         serviceWorkerVersion: null,
         buildConfig: _buildConfigString,
         flutterJsFile: _flutterJsFile,
         flutterBootstrapJs: _flutterBootstrapJsContent,
+        logger: logger,
+        webDefines: _webDefines,
       ),
+      encoding: utf8,
       headers: <String, String>{HttpHeaders.contentTypeHeader: 'text/html'},
     );
   }

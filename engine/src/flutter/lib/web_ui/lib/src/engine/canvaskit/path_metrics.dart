@@ -23,20 +23,27 @@ class CkPathMetrics extends IterableBase<ui.PathMetric> implements DisposablePat
 
 class CkContourMeasureIter implements DisposablePathMetricIterator {
   CkContourMeasureIter(this._metrics) {
-    _ref = UniqueRef<SkContourMeasureIter>(
+    _skPathRef = CkUniqueRef<SkPath>(
       this,
-      SkContourMeasureIter(_metrics._path.skiaObject, _metrics._forceClosed, 1.0),
-      'Iterator<PathMetric>',
+      _metrics._path.snapshotSkPath(),
+      'SkContourMeasureIter:SkPath',
+    );
+    _ref = CkUniqueRef<SkContourMeasureIter>(
+      this,
+      SkContourMeasureIter(_skPathRef.nativeObject, _metrics._forceClosed, 1.0),
+      'CkContourMeasureIter:SkContourMeasureIter',
     );
   }
 
   @override
   void dispose() {
     _ref.dispose();
+    _skPathRef.dispose();
   }
 
   final CkPathMetrics _metrics;
-  late final UniqueRef<SkContourMeasureIter> _ref;
+  late final CkUniqueRef<SkContourMeasureIter> _ref;
+  late final CkUniqueRef<SkPath> _skPathRef;
 
   SkContourMeasureIter get skiaObject => _ref.nativeObject;
 
@@ -76,7 +83,7 @@ class CkContourMeasureIter implements DisposablePathMetricIterator {
 
 class CkContourMeasure implements DisposablePathMetric {
   CkContourMeasure(this._metrics, SkContourMeasure skiaObject, this.contourIndex) {
-    _ref = UniqueRef<SkContourMeasure>(this, skiaObject, 'PathMetric');
+    _ref = CkUniqueRef<SkContourMeasure>(this, skiaObject, 'PathMetric');
   }
 
   /// The path metrics used to create this measure.
@@ -84,7 +91,7 @@ class CkContourMeasure implements DisposablePathMetric {
   /// This is used to resurrect the object if it is deleted prematurely.
   final CkPathMetrics _metrics;
 
-  late final UniqueRef<SkContourMeasure> _ref;
+  late final CkUniqueRef<SkContourMeasure> _ref;
 
   SkContourMeasure get skiaObject => _ref.nativeObject;
 
@@ -99,7 +106,9 @@ class CkContourMeasure implements DisposablePathMetric {
   @override
   CkPath extractPath(double start, double end, {bool startWithMoveTo = true}) {
     final SkPath skPath = skiaObject.getSegment(start, end, startWithMoveTo);
-    return CkPath.fromSkPath(skPath, _metrics._path.fillType);
+    final extractedCkPath = CkPath.fromSkPath(skPath, _metrics._path.fillType);
+    skPath.delete();
+    return extractedCkPath;
   }
 
   @override

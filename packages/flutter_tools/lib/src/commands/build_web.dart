@@ -31,6 +31,7 @@ class BuildWebCommand extends BuildSubCommand {
     usesBuildNameOption();
     addBuildModeFlags(verboseHelp: verboseHelp);
     usesDartDefineOption();
+    usesWebDefineOption();
     addEnableExperimentation(hide: !verboseHelp);
     addNativeNullAssertions();
 
@@ -38,18 +39,20 @@ class BuildWebCommand extends BuildSubCommand {
     // Flutter web-specific options
     //
     argParser.addSeparator('Flutter web options');
+    usesBaseHrefOption();
     argParser.addOption(
-      'base-href',
+      'static-assets-url',
       help:
-          'Overrides the href attribute of the <base> tag in web/index.html. '
-          'No change is done to web/index.html file if this flag is not provided. '
-          'The value has to start and end with a slash "/". '
-          'For more information: https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base',
+          'Used when serving the static assets from a different domain the application is hosted on. '
+          'The value has to end with a slash "/". '
+          'When this is set, it will replace all $kStaticAssetsUrlPlaceholder in web/index.html for the given value.',
     );
     argParser.addOption(
       'pwa-strategy',
-      defaultsTo: ServiceWorkerStrategy.offlineFirst.cliName,
-      help: 'The caching strategy to be used by the PWA service worker.',
+      hide: true,
+      help:
+          'This option is deprecated and will be removed in a future Flutter release.\n'
+          'The caching strategy to be used by the PWA service worker.',
       allowed: ServiceWorkerStrategy.values.map((ServiceWorkerStrategy e) => e.cliName),
       allowedHelp: CliEnum.allowedHelp(ServiceWorkerStrategy.values),
     );
@@ -213,7 +216,7 @@ class BuildWebCommand extends BuildSubCommand {
           dumpInfo: boolArg('dump-info'),
           minify: minifyJs,
           nativeNullAssertions: boolArg('native-null-assertions'),
-          noFrequencyBasedMinification: boolArg('no-frequency-based-minification'),
+          useFrequencyBasedMinification: !boolArg('no-frequency-based-minification'),
           optimizationLevel: jsOptimizationLevel,
           sourceMaps: sourceMaps,
         ),
@@ -225,7 +228,7 @@ class BuildWebCommand extends BuildSubCommand {
           dumpInfo: boolArg('dump-info'),
           minify: minifyJs,
           nativeNullAssertions: boolArg('native-null-assertions'),
-          noFrequencyBasedMinification: boolArg('no-frequency-based-minification'),
+          useFrequencyBasedMinification: !boolArg('no-frequency-based-minification'),
           optimizationLevel: jsOptimizationLevel,
           sourceMaps: sourceMaps,
           renderer: webRenderer,
@@ -243,10 +246,17 @@ class BuildWebCommand extends BuildSubCommand {
 
     final BuildInfo buildInfo = await getBuildInfo();
     final String? baseHref = stringArg('base-href');
+    final String? staticAssetsUrl = stringArg('static-assets-url');
     if (baseHref != null && !(baseHref.startsWith('/') && baseHref.endsWith('/'))) {
       throwToolExit(
         'Received a --base-href value of "$baseHref"\n'
         '--base-href should start and end with /',
+      );
+    }
+    if (staticAssetsUrl != null && !staticAssetsUrl.endsWith('/')) {
+      throwToolExit(
+        'Received a --static-assets-url value of "$staticAssetsUrl"\n'
+        '--static-assets-url should end with /',
       );
     }
     if (!project.web.existsSync()) {
@@ -271,6 +281,7 @@ class BuildWebCommand extends BuildSubCommand {
     // valid approaches for setting output directory of build artifacts
     final String? outputDirectoryPath = stringArg('output');
 
+    final Map<String, String> webDefines = extractWebDefines();
     final webBuilder = WebBuilder(
       logger: globals.logger,
       processManager: globals.processManager,
@@ -286,7 +297,9 @@ class BuildWebCommand extends BuildSubCommand {
       ServiceWorkerStrategy.fromCliName(stringArg('pwa-strategy')),
       compilerConfigs: compilerConfigs,
       baseHref: baseHref,
+      staticAssetsUrl: staticAssetsUrl,
       outputDirectoryPath: outputDirectoryPath,
+      webDefines: webDefines,
     );
     return FlutterCommandResult.success();
   }

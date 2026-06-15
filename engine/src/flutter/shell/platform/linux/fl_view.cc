@@ -5,6 +5,7 @@
 #include "flutter/shell/platform/linux/public/flutter_linux/fl_view.h"
 
 #include <atk/atk.h>
+#include <gdk/gdkwayland.h>
 #include <gtk/gtk-a11y.h>
 
 #include <cstring>
@@ -33,8 +34,11 @@ struct _FlView {
   // Event box the render area goes inside.
   GtkWidget* event_box;
 
-  // The widget rendering the Flutter view, either GtkGLArea or GtkDrawingArea.
-  GtkWidget* render_area;
+  // The widget rendering the Flutter view.
+  GtkDrawingArea* render_area;
+
+  // Rendering context when using OpenGL.
+  GdkGLContext* render_context;
 
   // Engine this view is showing.
   FlEngine* engine;
@@ -75,6 +79,9 @@ struct _FlView {
   // Signal subscripton for cursor changes.
   guint cursor_changed_cb_id;
 
+  // TRUE if the view size should be controlled by Flutter.
+  gboolean sized_to_content;
+
   GCancellable* cancellable;
 };
 
@@ -99,14 +106,44 @@ G_DEFINE_TYPE_WITH_CODE(
 static gboolean redraw_cb(gpointer user_data) {
   FlView* self = FL_VIEW(user_data);
 
+<<<<<<< HEAD
   gtk_widget_queue_draw(GTK_WIDGET(self->render_area));
 
+=======
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
   if (!self->have_first_frame) {
     self->have_first_frame = TRUE;
     g_signal_emit(self, fl_view_signals[SIGNAL_FIRST_FRAME], 0);
   }
 
-  return FALSE;
+  // If Flutter is controlling the window size, then resize the view if
+  // necessary.
+  GtkAllocation allocation;
+  gtk_widget_get_allocation(GTK_WIDGET(self->render_area), &allocation);
+  gint scale_factor =
+      gtk_widget_get_scale_factor(GTK_WIDGET(self->render_area));
+  size_t width = allocation.width * scale_factor;
+  size_t height = allocation.height * scale_factor;
+  size_t frame_width, frame_height;
+  fl_compositor_get_frame_size(self->compositor, &frame_width, &frame_height);
+  gboolean frame_size_matches = width == frame_width && height == frame_height;
+  if (self->sized_to_content && !frame_size_matches) {
+    gtk_widget_set_size_request(GTK_WIDGET(self->render_area),
+                                frame_width / scale_factor,
+                                frame_height / scale_factor);
+    GtkWidget* toplevel =
+        gtk_widget_get_toplevel(GTK_WIDGET(self->render_area));
+    if (GTK_IS_WINDOW(toplevel)) {
+      // Resize to smallest size, so that the window will shrink to fit the new
+      // size of the render area.
+      gtk_window_resize(GTK_WINDOW(toplevel), 1, 1);
+    }
+    return G_SOURCE_REMOVE;
+  }
+
+  gtk_widget_queue_draw(GTK_WIDGET(self->render_area));
+
+  return G_SOURCE_REMOVE;
 }
 
 // Signal handler for GtkWidget::delete-event
@@ -127,8 +164,12 @@ static void init_touch(FlView* self) {
   self->touch_manager = fl_touch_manager_new(self->engine, self->view_id);
 }
 
-static FlutterPointerDeviceKind get_device_kind(GdkEvent* event) {
+static FlutterPointerDeviceKind get_pointer_device_kind(GdkEvent* event) {
   GdkDevice* device = gdk_event_get_source_device(event);
+  if (device == nullptr) {
+    return kFlutterPointerDeviceKindMouse;
+  }
+
   GdkInputSource source = gdk_device_get_source(device);
   switch (source) {
     case GDK_SOURCE_PEN:
@@ -170,6 +211,11 @@ static void setup_cursor(FlView* self) {
 
 // Updates the engine with the current window metrics.
 static void handle_geometry_changed(FlView* self) {
+  // No updates required when size controlled by Flutter.
+  if (self->sized_to_content) {
+    return;
+  }
+
   GtkAllocation allocation;
   gtk_widget_get_allocation(GTK_WIDGET(self), &allocation);
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
@@ -195,29 +241,18 @@ static void handle_geometry_changed(FlView* self) {
     display_id = fl_display_monitor_get_display_id(
         fl_engine_get_display_monitor(self->engine), monitor);
   }
+  size_t width = allocation.width, height = allocation.height;
+  size_t min_width = width, min_height = height;
+  size_t max_width = width, max_height = height;
   fl_engine_send_window_metrics_event(
-      self->engine, display_id, self->view_id, allocation.width * scale_factor,
-      allocation.height * scale_factor, scale_factor);
-
-  // Make sure the view has been realized and its size has been allocated before
-  // waiting for a frame. `fl_view_realize()` and `fl_view_size_allocate()` may
-  // be called in either order depending on the order in which the window is
-  // shown and the view is added to a container in the app runner.
-  //
-  // Note: `gtk_widget_init()` initializes the size allocation to 1x1.
-  if (allocation.width > 1 && allocation.height > 1 &&
-      gtk_widget_get_realized(GTK_WIDGET(self))) {
-    fl_compositor_wait_for_frame(self->compositor,
-                                 allocation.width * scale_factor,
-                                 allocation.height * scale_factor);
-  }
+      self->engine, display_id, self->view_id, min_width * scale_factor,
+      min_height * scale_factor, max_width * scale_factor,
+      max_height * scale_factor, scale_factor);
 }
 
 static void view_added_cb(GObject* object,
                           GAsyncResult* result,
                           gpointer user_data) {
-  FlView* self = FL_VIEW(user_data);
-
   g_autoptr(GError) error = nullptr;
   if (!fl_engine_add_view_finish(FL_ENGINE(object), result, &error)) {
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -228,8 +263,6 @@ static void view_added_cb(GObject* object,
     // FIXME: Show on the GLArea
     return;
   }
-
-  handle_geometry_changed(self);
 }
 
 // Called when the engine updates accessibility.
@@ -322,8 +355,9 @@ static gboolean button_press_event_cb(FlView* self,
 
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
   return fl_pointer_manager_handle_button_press(
-      self->pointer_manager, gdk_event_get_time(event), get_device_kind(event),
-      x * scale_factor, y * scale_factor, button);
+      self->pointer_manager, gdk_event_get_time(event),
+      get_pointer_device_kind(event), x * scale_factor, y * scale_factor,
+      button);
 }
 
 // Signal handler for GtkWidget::button-release-event
@@ -342,8 +376,9 @@ static gboolean button_release_event_cb(FlView* self,
 
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
   return fl_pointer_manager_handle_button_release(
-      self->pointer_manager, gdk_event_get_time(event), get_device_kind(event),
-      x * scale_factor, y * scale_factor, button);
+      self->pointer_manager, gdk_event_get_time(event),
+      get_pointer_device_kind(event), x * scale_factor, y * scale_factor,
+      button);
 }
 
 // Signal handler for GtkWidget::scroll-event
@@ -381,8 +416,8 @@ static gboolean motion_notify_event_cb(FlView* self,
   gdk_event_get_coords(event, &x, &y);
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
   return fl_pointer_manager_handle_motion(
-      self->pointer_manager, gdk_event_get_time(event), get_device_kind(event),
-      x * scale_factor, y * scale_factor);
+      self->pointer_manager, gdk_event_get_time(event),
+      get_pointer_device_kind(event), x * scale_factor, y * scale_factor);
 }
 
 // Signal handler for GtkWidget::enter-notify-event
@@ -393,8 +428,8 @@ static gboolean enter_notify_event_cb(FlView* self,
   gdk_event_get_coords(event, &x, &y);
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
   return fl_pointer_manager_handle_enter(
-      self->pointer_manager, gdk_event_get_time(event), get_device_kind(event),
-      x * scale_factor, y * scale_factor);
+      self->pointer_manager, gdk_event_get_time(event),
+      get_pointer_device_kind(event), x * scale_factor, y * scale_factor);
 }
 
 // Signal handler for GtkWidget::leave-notify-event
@@ -409,8 +444,8 @@ static gboolean leave_notify_event_cb(FlView* self,
   gdk_event_get_coords(event, &x, &y);
   gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
   return fl_pointer_manager_handle_leave(
-      self->pointer_manager, gdk_event_get_time(event), get_device_kind(event),
-      x * scale_factor, y * scale_factor);
+      self->pointer_manager, gdk_event_get_time(event),
+      get_pointer_device_kind(event), x * scale_factor, y * scale_factor);
 }
 
 static void gesture_rotation_begin_cb(FlView* self) {
@@ -440,36 +475,43 @@ static void gesture_zoom_end_cb(FlView* self) {
   fl_scrolling_manager_handle_zoom_end(self->scrolling_manager);
 }
 
-static GdkGLContext* create_context_cb(FlView* self) {
-  if (self->view_id != flutter::kFlutterImplicitViewId) {
-    return nullptr;
-  }
-
-  FlOpenGLManager* opengl_manager = fl_engine_get_opengl_manager(self->engine);
+static void setup_opengl(FlView* self) {
   g_autoptr(GError) error = nullptr;
-  if (!fl_opengl_manager_create_contexts(
-          opengl_manager, gtk_widget_get_parent_window(GTK_WIDGET(self)),
-          &error)) {
-    gtk_gl_area_set_error(GTK_GL_AREA(self->render_area), error);
-    return nullptr;
+
+  self->render_context = gdk_window_create_gl_context(
+      gtk_widget_get_window(GTK_WIDGET(self->render_area)), &error);
+  if (self->render_context == nullptr) {
+    g_warning("Failed to create OpenGL context: %s", error->message);
+    return;
   }
 
-  return GDK_GL_CONTEXT(
-      g_object_ref(fl_opengl_manager_get_context(opengl_manager)));
+  if (!gdk_gl_context_realize(self->render_context, &error)) {
+    g_warning("Failed to realize OpenGL context: %s", error->message);
+    return;
+  }
+
+  // If using Wayland, then EGL is in use and we can access the frame
+  // from the Flutter context using EGLImage. If not (i.e. X11 using GLX)
+  // then we have to copy the texture via the CPU.
+  gboolean shareable =
+      GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(GTK_WIDGET(self)));
+  self->compositor = FL_COMPOSITOR(fl_compositor_opengl_new(
+      fl_engine_get_task_runner(self->engine),
+      fl_engine_get_opengl_manager(self->engine), shareable));
+}
+
+static void setup_software(FlView* self) {
+  self->compositor = FL_COMPOSITOR(
+      fl_compositor_software_new(fl_engine_get_task_runner(self->engine)));
 }
 
 static void realize_cb(FlView* self) {
-  FlutterRendererType renderer_type = fl_engine_get_renderer_type(self->engine);
-  switch (renderer_type) {
+  switch (fl_engine_get_renderer_type(self->engine)) {
     case kOpenGL:
-      self->compositor = FL_COMPOSITOR(fl_compositor_opengl_new(
-          self->engine,
-          self->view_id == flutter::kFlutterImplicitViewId
-              ? nullptr
-              : gtk_gl_area_get_context(GTK_GL_AREA(self->render_area))));
+      setup_opengl(self);
       break;
     case kSoftware:
-      self->compositor = FL_COMPOSITOR(fl_compositor_software_new());
+      setup_software(self);
       break;
     default:
       break;
@@ -505,6 +547,10 @@ static void realize_cb(FlView* self) {
   handle_geometry_changed(self);
 }
 
+static void size_allocate_cb(FlView* self) {
+  handle_geometry_changed(self);
+}
+
 static void paint_background(FlView* self, cairo_t* cr) {
   // Don't bother drawing if fully transparent - the widget above this will
   // already be drawn by GTK.
@@ -517,52 +563,23 @@ static void paint_background(FlView* self, cairo_t* cr) {
   cairo_paint(cr);
 }
 
-static gboolean opengl_draw_cb(FlView* self, cairo_t* cr) {
+static gboolean draw_cb(FlView* self, cairo_t* cr) {
   paint_background(self, cr);
 
-  return FALSE;
-}
-
-static gboolean render_cb(FlView* self, GdkGLContext* context) {
-  if (gtk_gl_area_get_error(GTK_GL_AREA(self->render_area)) != NULL) {
-    return FALSE;
+  if (self->render_context) {
+    gdk_gl_context_make_current(self->render_context);
   }
 
-  int width = gtk_widget_get_allocated_width(self->render_area);
-  int height = gtk_widget_get_allocated_height(self->render_area);
-  gint scale_factor = gtk_widget_get_scale_factor(self->render_area);
-  fl_compositor_opengl_render(FL_COMPOSITOR_OPENGL(self->compositor),
-                              width * scale_factor, height * scale_factor);
+  gboolean wait_for_frame = !self->sized_to_content;
+  gboolean result = fl_compositor_render(
+      self->compositor, cr,
+      gtk_widget_get_window(GTK_WIDGET(self->render_area)), wait_for_frame);
 
-  return TRUE;
-}
-
-static gboolean software_draw_cb(FlView* self, cairo_t* cr) {
-  paint_background(self, cr);
-
-  return fl_compositor_software_render(
-      FL_COMPOSITOR_SOFTWARE(self->compositor), cr,
-      gtk_widget_get_scale_factor(GTK_WIDGET(self)));
-}
-
-static void unrealize_cb(FlView* self) {
-  if (self->view_id != flutter::kFlutterImplicitViewId) {
-    return;
+  if (self->render_context) {
+    gdk_gl_context_clear_current();
   }
 
-  fl_opengl_manager_make_current(fl_engine_get_opengl_manager(self->engine));
-
-  GError* gl_error = gtk_gl_area_get_error(GTK_GL_AREA(self->render_area));
-  if (gl_error != NULL) {
-    g_warning("Failed to uninitialize GLArea: %s", gl_error->message);
-    return;
-  }
-
-  fl_compositor_opengl_cleanup(FL_COMPOSITOR_OPENGL(self->compositor));
-}
-
-static void size_allocate_cb(FlView* self) {
-  handle_geometry_changed(self);
+  return result;
 }
 
 static void fl_view_notify(GObject* object, GParamSpec* pspec) {
@@ -606,6 +623,7 @@ static void fl_view_dispose(GObject* object) {
     self->update_semantics_cb_id = 0;
   }
 
+  g_clear_object(&self->render_context);
   g_clear_object(&self->engine);
   g_clear_object(&self->compositor);
   g_clear_pointer(&self->background_color, gdk_rgba_free);
@@ -626,7 +644,7 @@ static void fl_view_realize(GtkWidget* widget) {
   GTK_WIDGET_CLASS(fl_view_parent_class)->realize(widget);
 
   // Realize the child widgets.
-  gtk_widget_realize(self->render_area);
+  gtk_widget_realize(GTK_WIDGET(self->render_area));
 }
 
 static gboolean handle_key_event(FlView* self, GdkEventKey* key_event) {
@@ -709,35 +727,6 @@ static void fl_view_class_init(FlViewClass* klass) {
 
 // Engine related construction.
 static void setup_engine(FlView* self) {
-  FlutterRendererType renderer_type = fl_engine_get_renderer_type(self->engine);
-  switch (renderer_type) {
-    case kOpenGL:
-      self->render_area = gtk_gl_area_new();
-      gtk_gl_area_set_has_alpha(GTK_GL_AREA(self->render_area), TRUE);
-      g_signal_connect_swapped(self->render_area, "draw",
-                               G_CALLBACK(opengl_draw_cb), self);
-      g_signal_connect_swapped(self->render_area, "render",
-                               G_CALLBACK(render_cb), self);
-      g_signal_connect_swapped(self->render_area, "create-context",
-                               G_CALLBACK(create_context_cb), self);
-      g_signal_connect_swapped(self->render_area, "unrealize",
-                               G_CALLBACK(unrealize_cb), self);
-      break;
-    case kSoftware:
-      self->render_area = gtk_drawing_area_new();
-      g_signal_connect_swapped(self->render_area, "draw",
-                               G_CALLBACK(software_draw_cb), self);
-      break;
-    default:
-      self->render_area = gtk_label_new("Unsupported Flutter renderer type");
-      break;
-  }
-
-  gtk_widget_show(self->render_area);
-  gtk_container_add(GTK_CONTAINER(self->event_box), self->render_area);
-  g_signal_connect_swapped(self->render_area, "realize", G_CALLBACK(realize_cb),
-                           self);
-
   self->view_accessible = fl_view_accessible_new(self->engine, self->view_id);
   fl_socket_accessible_embed(
       FL_SOCKET_ACCESSIBLE(gtk_widget_get_accessible(GTK_WIDGET(self))),
@@ -804,7 +793,15 @@ static void fl_view_init(FlView* self) {
   g_signal_connect_swapped(self->event_box, "touch-event",
                            G_CALLBACK(touch_event_cb), self);
 
-  g_signal_connect_swapped(self, "size-allocate", G_CALLBACK(size_allocate_cb),
+  self->render_area = GTK_DRAWING_AREA(gtk_drawing_area_new());
+  gtk_widget_show(GTK_WIDGET(self->render_area));
+  gtk_container_add(GTK_CONTAINER(self->event_box),
+                    GTK_WIDGET(self->render_area));
+  g_signal_connect_swapped(self->render_area, "realize", G_CALLBACK(realize_cb),
+                           self);
+  g_signal_connect_swapped(self->render_area, "size-allocate",
+                           G_CALLBACK(size_allocate_cb), self);
+  g_signal_connect_swapped(self->render_area, "draw", G_CALLBACK(draw_cb),
                            self);
 }
 
@@ -827,8 +824,29 @@ G_MODULE_EXPORT FlView* fl_view_new_for_engine(FlEngine* engine) {
 
   self->engine = FL_ENGINE(g_object_ref(engine));
 
-  self->view_id = fl_engine_add_view(engine, FL_RENDERABLE(self), 1, 1, 1.0,
-                                     self->cancellable, view_added_cb, self);
+  size_t min_width = 1, min_height = 1, max_width = 1, max_height = 1;
+  gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
+  self->view_id = fl_engine_add_view(
+      engine, FL_RENDERABLE(self), min_width, min_height, max_width, max_height,
+      scale_factor, self->cancellable, view_added_cb, self);
+
+  setup_engine(self);
+
+  return self;
+}
+
+G_MODULE_EXPORT FlView* fl_view_new_sized_to_content(FlEngine* engine) {
+  FlView* self = FL_VIEW(g_object_new(fl_view_get_type(), nullptr));
+
+  self->engine = FL_ENGINE(g_object_ref(engine));
+
+  self->sized_to_content = TRUE;
+  size_t min_width = 1, min_height = 1, max_width = G_MAXSIZE,
+         max_height = G_MAXSIZE;
+  gint scale_factor = gtk_widget_get_scale_factor(GTK_WIDGET(self));
+  self->view_id = fl_engine_add_view(
+      engine, FL_RENDERABLE(self), min_width, min_height, max_width, max_height,
+      scale_factor, self->cancellable, view_added_cb, self);
 
   setup_engine(self);
 

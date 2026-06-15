@@ -33,7 +33,7 @@ enum _CheckableKind {
 _CheckableKind _checkableKindFromSemanticsFlag(SemanticsObject semanticsObject) {
   if (semanticsObject.flags.isInMutuallyExclusiveGroup) {
     return _CheckableKind.radio;
-  } else if (semanticsObject.flags.hasToggledState) {
+  } else if (semanticsObject.flags.isToggled != ui.Tristate.none) {
     return _CheckableKind.toggle;
   } else {
     return _CheckableKind.checkbox;
@@ -102,7 +102,10 @@ class SemanticCheckable extends SemanticRole {
 
       setAttribute(
         'aria-checked',
-        (semanticsObject.flags.isChecked || semanticsObject.flags.isToggled) ? 'true' : 'false',
+        (semanticsObject.flags.isChecked == ui.CheckedState.isTrue ||
+                semanticsObject.flags.isToggled == ui.Tristate.isTrue)
+            ? 'true'
+            : 'false',
       );
     }
   }
@@ -154,8 +157,11 @@ class Selectable extends SemanticBehavior {
 
   @override
   void update() {
+    // Do not use the [Selectable] behavior on checkables. Checkables use
+    // special ARIA roles and `aria-checked`. Adding `aria-selected` in addition
+    // to `aria-checked` would be confusing.
     if (semanticsObject.isFlagsDirty) {
-      if (semanticsObject.isSelectable) {
+      if (semanticsObject.isSelectable && !semanticsObject.isCheckable) {
         final ui.SemanticsRole currentRole = semanticsObject.role;
         final bool isSelected = semanticsObject.isSelected;
 

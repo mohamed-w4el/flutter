@@ -6,8 +6,6 @@ import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
 import 'package:yaml/yaml.dart';
 
-import '../android/android.dart' as android_common;
-import '../android/android_workflow.dart';
 import '../android/gradle_utils.dart' as gradle;
 import '../base/common.dart';
 import '../base/file_system.dart';
@@ -24,7 +22,15 @@ const _kAvailablePlatforms = <String>['ios', 'android', 'windows', 'linux', 'mac
 
 /// A list of all possible create platforms, even those that may not be enabled
 /// with the current config.
-const kAllCreatePlatforms = <String>['ios', 'android', 'windows', 'linux', 'macos', 'web'];
+const kAllCreatePlatforms = <String>[
+  'ios',
+  'android',
+  'windows',
+  'linux',
+  'macos',
+  'web',
+  'darwin',
+];
 
 const _kDefaultPlatformArgumentHelp =
     '(required) The platforms supported by this project. '
@@ -96,13 +102,14 @@ mixin CreateBase on FlutterCommand {
   ///
   /// The help message of the argument is replaced with `customHelp` if `customHelp` is not null.
   @protected
-  void addPlatformsOptions({String? customHelp}) {
+  void addPlatformsOptions({String? customHelp, required Map<String, String> allowedHelp}) {
     argParser.addMultiOption(
       'platforms',
       help: customHelp ?? _kDefaultPlatformArgumentHelp,
       aliases: <String>['platform'],
       defaultsTo: <String>[..._kAvailablePlatforms],
-      allowed: <String>[..._kAvailablePlatforms],
+      allowed: <String>[...kAllCreatePlatforms],
+      allowedHelp: allowedHelp,
     );
   }
 
@@ -203,8 +210,16 @@ mixin CreateBase on FlutterCommand {
       // Make exception for dev and examples to facilitate example project development.
       final String examplesDirectory = globals.fs.path.join(flutterRoot, 'examples');
       final String devDirectory = globals.fs.path.join(flutterRoot, 'dev');
+      final String engineExamplesDirectory = globals.fs.path.join(
+        flutterRoot,
+        'engine',
+        'src',
+        'flutter',
+        'examples',
+      );
       if (!globals.fs.path.isWithin(examplesDirectory, projectDirPath) &&
-          !globals.fs.path.isWithin(devDirectory, projectDirPath)) {
+          !globals.fs.path.isWithin(devDirectory, projectDirPath) &&
+          !globals.fs.path.isWithin(engineExamplesDirectory, projectDirPath)) {
         throwToolExit(
           'Cannot create a project within the Flutter SDK. '
           "Target directory '$projectDirPath' is within the Flutter SDK at '$flutterRoot'.",
@@ -298,7 +313,6 @@ mixin CreateBase on FlutterCommand {
     String? projectDescription,
     String? androidLanguage,
     String? iosDevelopmentTeam,
-    String? iosLanguage,
     required String flutterRoot,
     required String dartSdkVersionBounds,
     String? agpVersion,
@@ -315,6 +329,7 @@ mixin CreateBase on FlutterCommand {
     bool linux = false,
     bool macos = false,
     bool windows = false,
+    bool darwin = false,
     bool implementationTests = false,
   }) {
     final String pluginDartClass = _createPluginClassName(projectName);
@@ -339,12 +354,13 @@ mixin CreateBase on FlutterCommand {
       'androidIdentifier': androidIdentifier,
       'iosIdentifier': appleIdentifier,
       'macosIdentifier': appleIdentifier,
+      'darwinIdentifier': appleIdentifier,
       'linuxIdentifier': linuxIdentifier,
       'windowsIdentifier': windowsIdentifier,
       'description': projectDescription,
       'dartSdk': '$flutterRoot/bin/cache/dart-sdk',
-      'androidMinApiLevel': android_common.minApiLevel,
-      'androidSdkVersion': kAndroidSdkMinVersion,
+      'androidMinApiLevel': gradle.minSdkVersion,
+      'androidSdkVersion': gradle.minSdkVersion,
       'pluginClass': pluginClass,
       'pluginClassSnakeCase': pluginClassSnakeCase,
       'pluginClassLowerCamelCase': pluginClassLowerCamelCase,
@@ -359,7 +375,6 @@ mixin CreateBase on FlutterCommand {
       'withPluginHook': withFfiPluginHook || withFfiPackage || withPlatformChannelPluginHook,
       'withEmptyMain': withEmptyMain,
       'androidLanguage': androidLanguage,
-      'iosLanguage': iosLanguage,
       'hasIosDevelopmentTeam': iosDevelopmentTeam != null && iosDevelopmentTeam.isNotEmpty,
       'iosDevelopmentTeam': iosDevelopmentTeam ?? '',
       'flutterRevision': escapeYamlString(globals.flutterVersion.frameworkRevision),
@@ -369,6 +384,8 @@ mixin CreateBase on FlutterCommand {
       'web': web,
       'linux': linux,
       'macos': macos,
+      'darwin': darwin,
+      'sharedDarwinSource': darwin,
       'windows': windows,
       'year': DateTime.now().year,
       'dartSdkVersionBounds': dartSdkVersionBounds,
@@ -473,6 +490,7 @@ mixin CreateBase on FlutterCommand {
     final bool macOSPlatform = templateContext['macos'] as bool? ?? false;
     final bool windowsPlatform = templateContext['windows'] as bool? ?? false;
     final bool webPlatform = templateContext['web'] as bool? ?? false;
+    final bool darwinPlatform = templateContext['darwin'] as bool? ?? false;
 
     final platformsForMigrateConfig = <SupportedPlatform>[SupportedPlatform.root];
     if (androidPlatform) {
@@ -487,6 +505,14 @@ mixin CreateBase on FlutterCommand {
     }
     if (macOSPlatform) {
       platformsForMigrateConfig.add(SupportedPlatform.macos);
+    }
+    if (darwinPlatform) {
+      if (!platformsForMigrateConfig.contains(SupportedPlatform.ios)) {
+        platformsForMigrateConfig.add(SupportedPlatform.ios);
+      }
+      if (!platformsForMigrateConfig.contains(SupportedPlatform.macos)) {
+        platformsForMigrateConfig.add(SupportedPlatform.macos);
+      }
     }
     if (webPlatform) {
       platformsForMigrateConfig.add(SupportedPlatform.web);

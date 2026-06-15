@@ -9,6 +9,7 @@ import 'package:args/command_runner.dart';
 import 'package:file/memory.dart';
 import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/base/error_handling_io.dart';
+import 'package:flutter_tools/src/base/exit.dart';
 import 'package:flutter_tools/src/base/file_system.dart';
 import 'package:flutter_tools/src/base/io.dart';
 import 'package:flutter_tools/src/base/logger.dart';
@@ -726,6 +727,7 @@ void main() {
       },
     );
 
+<<<<<<< HEAD
     testUsingContext(
       'dds options --disable-dds works, but is deprecated',
       () async {
@@ -775,6 +777,8 @@ void main() {
       },
     );
 
+=======
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
     group('findTargetDevice', () {
       final device1 = FakeDevice('device1', 'device1');
       final device2 = FakeDevice('device2', 'device2');
@@ -1593,8 +1597,7 @@ Use the "flutter config" command to enable feature flags.''',
             final fileSystem = MemoryFileSystem.test();
             fileSystem
               ..file('lib/main.dart').createSync(recursive: true)
-              ..file('pubspec.yaml').createSync()
-              ..file('.packages').createSync();
+              ..file('pubspec.yaml').createSync();
             fileSystem.file('config.json')
               ..createSync()
               ..writeAsStringSync('{"FLUTTER_ENABLED_FEATURE_FLAGS": "AlreadySet"}');
@@ -1684,7 +1687,7 @@ class FakeDdsCommand extends FlutterCommand {
 
 class FakeProcessInfo extends Fake implements ProcessInfo {
   @override
-  var maxRss = 0;
+  int maxRss = 0;
 }
 
 class FakeIoProcessSignal extends Fake implements io.ProcessSignal {
@@ -1695,7 +1698,7 @@ class FakeIoProcessSignal extends Fake implements io.ProcessSignal {
 }
 
 class FakeCache extends Fake implements Cache {
-  var artifacts = <Set<DevelopmentArtifact>>[];
+  List<Set<DevelopmentArtifact>> artifacts = <Set<DevelopmentArtifact>>[];
 
   @override
   Future<void> updateAll(Set<DevelopmentArtifact> requiredArtifacts, {bool offline = false}) async {
@@ -1730,7 +1733,7 @@ class FakeSignals implements Signals {
 }
 
 class FakeClock extends Fake implements SystemClock {
-  var times = <int>[];
+  List<int> times = <int>[];
 
   @override
   DateTime now() {

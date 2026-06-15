@@ -8,6 +8,7 @@
 /// @docImport 'proxy_sliver.dart';
 /// @docImport 'sliver_fill.dart';
 /// @docImport 'sliver_grid.dart';
+/// @docImport 'sliver_group.dart';
 /// @docImport 'sliver_list.dart';
 /// @docImport 'sliver_padding.dart';
 /// @docImport 'sliver_persistent_header.dart';
@@ -509,8 +510,8 @@ class SliverConstraints extends Constraints {
     InformationCollector? informationCollector,
   }) {
     assert(() {
-      bool hasErrors = false;
-      final StringBuffer errorMessage = StringBuffer('\n');
+      var hasErrors = false;
+      final errorMessage = StringBuffer('\n');
       void verify(bool check, String message) {
         if (check) {
           return;
@@ -526,7 +527,7 @@ class SliverConstraints extends Constraints {
         bool mustBeNegative = false,
       }) {
         if (property.isNaN) {
-          String additional = '.';
+          var additional = '.';
           if (mustBePositive) {
             additional = ', expected greater than or equal to zero.';
           } else if (mustBeNegative) {
@@ -614,7 +615,7 @@ class SliverConstraints extends Constraints {
 
   @override
   String toString() {
-    final List<String> properties = <String>[
+    final properties = <String>[
       '$axisDirection',
       '$growthDirection',
       '$userScrollDirection',
@@ -1379,10 +1380,10 @@ abstract class RenderSliver extends RenderObject {
         );
       }
 
-      final List<DiagnosticsNode> information = <DiagnosticsNode>[
+      final information = <DiagnosticsNode>[
         ErrorSummary('RenderSliver geometry setter called incorrectly.'),
         violation,
-        if (hint != null) hint,
+        ?hint,
         contract,
         describeForError('The RenderSliver in question is'),
       ];
@@ -1665,6 +1666,10 @@ abstract class RenderSliver extends RenderObject {
   ///
   /// The `child` must be a child of this sliver.
   ///
+  /// If there are pinned slivers before [child], the offset should be reduced
+  /// by the extent of the pinned children. This can occur in [RenderSliver]s
+  /// that have multiple sliver children, such as [RenderSliverMainAxisGroup].
+  ///
   /// This method differs from [childMainAxisPosition] in that
   /// [childMainAxisPosition] gives the distance from the leading _visible_ edge
   /// of the sliver whereas [childScrollOffset] gives the distance from sliver's
@@ -1730,6 +1735,59 @@ abstract class RenderSliver extends RenderObject {
     }
   }
 
+  /// Returns the [Rect] that covers the total paint extent of the sliver.
+  ///
+  /// [Rect] is expressed in the [RenderSliver]'s local coordinate system, which
+  /// is axis-aligned with the [PaintingContext]'s canvas. The coordinate
+  /// system's origin (0,0) corresponds to the `offset` argument passed to the
+  /// [paint] method.
+  @protected
+  Rect getMaxPaintRect() {
+    final SliverGeometry? sliverGeometry = geometry;
+    if (sliverGeometry == null || sliverGeometry == SliverGeometry.zero) {
+      return Rect.zero;
+    }
+
+    double maxPaintExtent = sliverGeometry.maxPaintExtent;
+    if (maxPaintExtent.isInfinite) {
+      maxPaintExtent =
+          constraints.scrollOffset + sliverGeometry.cacheExtent + constraints.cacheOrigin;
+    }
+    final double paintExtent = sliverGeometry.paintExtent;
+    // To ensure the computed [Rect] remains visible when pinned, the leading offset is capped
+    // at the sliver's `scrollExtent - maxScrollObstructionExtent`.
+    final double leadingOffset = clampDouble(
+      constraints.scrollOffset,
+      0.0,
+      sliverGeometry.scrollExtent - sliverGeometry.maxScrollObstructionExtent,
+    );
+    final double crossAxisExtent = sliverGeometry.crossAxisExtent ?? constraints.crossAxisExtent;
+
+    final Rect rect = switch (constraints.axis) {
+      Axis.horizontal => Rect.fromLTWH(-leadingOffset, 0.0, maxPaintExtent, crossAxisExtent),
+      Axis.vertical => Rect.fromLTWH(0.0, -leadingOffset, crossAxisExtent, maxPaintExtent),
+    };
+
+    return switch (applyGrowthDirectionToAxisDirection(
+      constraints.axisDirection,
+      constraints.growthDirection,
+    )) {
+      AxisDirection.right || AxisDirection.down => rect,
+      AxisDirection.left => Rect.fromLTRB(
+        paintExtent - rect.right,
+        rect.top,
+        paintExtent - rect.left,
+        rect.bottom,
+      ),
+      AxisDirection.up => Rect.fromLTRB(
+        rect.left,
+        paintExtent - rect.bottom,
+        rect.right,
+        paintExtent - rect.top,
+      ),
+    };
+  }
+
   void _debugDrawArrow(
     Canvas canvas,
     Paint paint,
@@ -1777,7 +1835,7 @@ abstract class RenderSliver extends RenderObject {
     assert(() {
       if (debugPaintSizeEnabled) {
         final double strokeWidth = math.min(4.0, geometry!.paintExtent / 30.0);
-        final Paint paint = Paint()
+        final paint = Paint()
           ..color = const Color(0xFF33CC33)
           ..strokeWidth = strokeWidth
           ..style = PaintingStyle.stroke
@@ -1957,7 +2015,7 @@ abstract class RenderSliverSingleBoxAdapter extends RenderSliver
     SliverConstraints constraints,
     SliverGeometry geometry,
   ) {
-    final SliverPhysicalParentData childParentData = child.parentData! as SliverPhysicalParentData;
+    final childParentData = child.parentData! as SliverPhysicalParentData;
     childParentData.paintOffset = switch (applyGrowthDirectionToAxisDirection(
       constraints.axisDirection,
       constraints.growthDirection,
@@ -2001,15 +2059,14 @@ abstract class RenderSliverSingleBoxAdapter extends RenderSliver
   @override
   void applyPaintTransform(RenderObject child, Matrix4 transform) {
     assert(child == this.child);
-    final SliverPhysicalParentData childParentData = child.parentData! as SliverPhysicalParentData;
+    final childParentData = child.parentData! as SliverPhysicalParentData;
     childParentData.applyPaintTransform(transform);
   }
 
   @override
   void paint(PaintingContext context, Offset offset) {
     if (child != null && geometry!.visible) {
-      final SliverPhysicalParentData childParentData =
-          child!.parentData! as SliverPhysicalParentData;
+      final childParentData = child!.parentData! as SliverPhysicalParentData;
       context.paintChild(child!, offset + childParentData.paintOffset);
     }
   }

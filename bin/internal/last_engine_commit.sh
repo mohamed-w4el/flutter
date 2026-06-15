@@ -27,7 +27,11 @@ set -e
 FLUTTER_ROOT="$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]}")")")"
 
 # 1. Determine when the release branch was started, and prevent set -e from exiting.
+<<<<<<< HEAD
 RELEASE_CANDIDATE_VERSION_PATH="$(git rev-parse --show-toplevel)/bin/internal/release-candidate-branch.version"
+=======
+RELEASE_CANDIDATE_VERSION_PATH="$FLUTTER_ROOT/bin/internal/release-candidate-branch.version"
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 REFERENCE_COMMIT="$(git log -1 --pretty=format:%H -- "$RELEASE_CANDIDATE_VERSION_PATH")"
 
 # If we did not find a merge-base, fail
@@ -40,7 +44,11 @@ fi
 
 # 2. Define and search history range to searhc within (unique to changes on this branch).
 HISTORY_RANGE="$REFERENCE_COMMIT..HEAD"
+<<<<<<< HEAD
 ENGINE_COMMIT="$(git log -1 --pretty=format:%H --ancestry-path "$HISTORY_RANGE" -- "$(git rev-parse --show-toplevel)/DEPS" "$(git rev-parse --show-toplevel)/engine")"
+=======
+ENGINE_COMMIT="$(git log -1 --pretty=format:%H --ancestry-path "$HISTORY_RANGE" -- "$FLUTTER_ROOT/DEPS" "$FLUTTER_ROOT/engine")"
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 
 # 3. If no engine-related commit was found within the current branch's history, fallback to the first commit on this branch.
 if [[ -z "$ENGINE_COMMIT" ]]; then

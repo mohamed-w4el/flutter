@@ -840,7 +840,6 @@ void main() {
 /base/assets/flutter_assets/NativeAssetsManifest.json
 /base/assets/flutter_assets/NOTICES.Z
 /base/assets/flutter_assets/FontManifest.json
-/base/assets/flutter_assets/AssetManifest.json
 /base/assets/flutter_assets/AssetManifest.bin
 /base/assets.pb
 /BundleConfig.pb
@@ -864,6 +863,7 @@ void main() {
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/libflutter.so.sym
+/BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/libapp.so.sym
 ''';
 
       // Output from `<android_sdk_root>/tools/bin/apkanalyzer files list <aab>`
@@ -874,6 +874,7 @@ void main() {
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/
 /BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/libflutter.so.dbg
+/BUNDLE-METADATA/com.android.tools.build.debugsymbols/arm64-v8a/libapp.so.dbg
 ''';
 
       void createSharedGradleFiles() {

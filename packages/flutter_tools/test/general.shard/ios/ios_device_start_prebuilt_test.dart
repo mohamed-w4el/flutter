@@ -13,6 +13,10 @@ import 'package:flutter_tools/src/base/logger.dart';
 import 'package:flutter_tools/src/base/platform.dart';
 import 'package:flutter_tools/src/base/process.dart';
 import 'package:flutter_tools/src/base/template.dart';
+<<<<<<< HEAD
+=======
+import 'package:flutter_tools/src/base/user_messages.dart';
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 import 'package:flutter_tools/src/base/version.dart';
 import 'package:flutter_tools/src/build_info.dart';
 import 'package:flutter_tools/src/cache.dart';
@@ -23,10 +27,12 @@ import 'package:flutter_tools/src/ios/core_devices.dart';
 import 'package:flutter_tools/src/ios/devices.dart';
 import 'package:flutter_tools/src/ios/ios_deploy.dart';
 import 'package:flutter_tools/src/ios/iproxy.dart';
+import 'package:flutter_tools/src/ios/lldb.dart';
 import 'package:flutter_tools/src/ios/mac.dart';
 import 'package:flutter_tools/src/ios/xcode_debug.dart';
 import 'package:flutter_tools/src/macos/xcode.dart';
 import 'package:flutter_tools/src/mdns_discovery.dart';
+import 'package:flutter_tools/src/vmservice.dart';
 import 'package:test/fake.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
@@ -177,7 +183,7 @@ void main() {
     },
   );
 
-  testWithoutContext(
+  testUsingContext(
     'IOSDevice.startApp twice in a row where ios-deploy fails the first time',
     () async {
       final logger = BufferLogger.test();
@@ -429,7 +435,7 @@ void main() {
     overrides: <Type, Generator>{MDnsVmServiceDiscovery: () => FakeMDnsVmServiceDiscovery()},
   );
 
-  testWithoutContext(
+  testUsingContext(
     'IOSDevice.startApp retries when ios-deploy loses connection the first time in CI',
     () async {
       final logger = BufferLogger.test();
@@ -490,7 +496,7 @@ void main() {
     },
   );
 
-  testWithoutContext(
+  testUsingContext(
     'IOSDevice.startApp does not retry when ios-deploy loses connection if not in CI',
     () async {
       final logger = BufferLogger.test();
@@ -538,7 +544,7 @@ void main() {
     },
   );
 
-  testWithoutContext('IOSDevice.startApp succeeds in release mode', () async {
+  testUsingContext('IOSDevice.startApp succeeds in release mode', () async {
     final FileSystem fileSystem = MemoryFileSystem.test();
     final processManager = FakeProcessManager.list(<FakeCommand>[kLaunchReleaseCommand]);
     final fakeAnalytics = FakeAnalytics();
@@ -596,6 +602,7 @@ void main() {
           '--args',
           <String>[
             '--enable-dart-profiling',
+            '--profile-startup',
             '--disable-service-auth-codes',
             '--disable-vm-service-publication',
             '--start-paused',
@@ -666,6 +673,7 @@ void main() {
         traceToFile: 'path/to/trace.binpb',
         endlessTraceBuffer: true,
         profileMicrotasks: true,
+        profileStartup: true,
         purgePersistentCache: true,
         verboseSystemLogs: true,
         enableImpeller: ImpellerStatus.disabled,
@@ -860,15 +868,30 @@ void main() {
             uncompressedBundle: bundleLocation,
             applicationPackage: bundleLocation,
           );
+<<<<<<< HEAD
           final deviceLogReader = FakeDeviceLogReader();
+=======
+          final DeviceLogReader deviceLogReader = IOSDeviceLogReader.test(
+            iMobileDevice: FakeIMobileDevice(),
+            xcode: FakeXcode(currentVersion: Version(26, 0, 0)),
+            isCoreDevice: true,
+          );
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 
           device.portForwarder = const NoOpDevicePortForwarder();
           device.setLogReader(iosApp, deviceLogReader);
 
           // Start writing messages to the log reader.
           Timer.run(() {
+<<<<<<< HEAD
             deviceLogReader.addLine('Foo');
             deviceLogReader.addLine('The Dart VM service is listening on http://127.0.0.1:456');
+=======
+            fakeLauncher.coreDeviceLogForwarder.addLog('Foo');
+            fakeLauncher.coreDeviceLogForwarder.addLog(
+              'The Dart VM service is listening on http://127.0.0.1:456',
+            );
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
           });
 
           final LaunchResult launchResult = await device.startApp(
@@ -879,6 +902,10 @@ void main() {
           );
 
           expect(launchResult.started, true);
+<<<<<<< HEAD
+=======
+          expect(launchResult.hasVmService, true);
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
           expect(fakeLauncher.launchedWithLLDB, true);
           expect(fakeLauncher.launchedWithXcode, false);
           expect(fakeAnalytics.sentEvents, [
@@ -1195,7 +1222,7 @@ void main() {
           deviceLogReader.addLine('The Dart VM service is listening on http://127.0.0.1:456');
         });
 
-        final shutDownHooks = FakeShutDownHooks();
+        final shutDownHooks = FakeShutdownHooks();
 
         final LaunchResult launchResult = await device.startApp(
           iosApp,
@@ -1206,7 +1233,11 @@ void main() {
         );
 
         expect(launchResult.started, true);
+<<<<<<< HEAD
         expect(shutDownHooks.hooks.length, 1);
+=======
+        expect(shutDownHooks.registeredHooks.length, 1);
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
         expect(fakeAnalytics.sentEvents, [
           Event.appleUsageEvent(
             workflow: 'ios-physical-deployment',
@@ -1279,6 +1310,86 @@ void main() {
               FakeMDnsVmServiceDiscovery(allowthrowOnMissingLocalNetworkPermissionsError: false),
         },
       );
+
+      group('IOSDevice warnIfSlowWirelessDebugging', () {
+        testWithoutContext('prints warning for slow wireless debugging on iOS 26+', () async {
+          final logger = BufferLogger.test();
+          final IOSDevice device = setUpIOSDevice(
+            sdkVersion: '26.0.0',
+            logger: logger,
+            interfaceType: DeviceConnectionInterface.wireless,
+          );
+          expect(device.isWirelesslyConnected, isTrue);
+
+          device.warnIfSlowWirelessDebugging(DebuggingOptions.enabled(BuildInfo.debug));
+
+          const warningMessage =
+              'Wireless debugging on iOS 26 may be slower than expected. '
+              'For better performance, consider using a wired (USB) connection.';
+          expect(logger.warningText, contains(warningMessage));
+
+          final event = json.decode(logger.eventText) as Map<String, dynamic>;
+          expect(event['name'], 'app.warning');
+          final args = event['args'] as Map<String, dynamic>;
+          expect(
+            args,
+            equals(<String, Object?>{
+              'warningId': 'ios-wireless-slow',
+              'warning': warningMessage,
+              'category': 'ios-wireless-performance',
+              'deviceId': '123',
+              'deviceOsVersion': 26,
+              'actionable': true,
+            }),
+          );
+        });
+        testWithoutContext(
+          'does not print slow wireless debugging warning on iOS less than 26',
+          () async {
+            final logger = BufferLogger.test();
+            final IOSDevice device = setUpIOSDevice(
+              sdkVersion: '25.0',
+              logger: logger,
+              interfaceType: DeviceConnectionInterface.wireless,
+            );
+
+            device.warnIfSlowWirelessDebugging(DebuggingOptions.enabled(BuildInfo.debug));
+
+            expect(logger.warningText, isEmpty);
+            expect(logger.eventText, isEmpty);
+          },
+        );
+
+        testWithoutContext(
+          'does not print slow wireless debugging warning for wired device',
+          () async {
+            final logger = BufferLogger.test();
+            final IOSDevice device = setUpIOSDevice(sdkVersion: '26.0', logger: logger);
+
+            device.warnIfSlowWirelessDebugging(DebuggingOptions.enabled(BuildInfo.debug));
+
+            expect(logger.warningText, isEmpty);
+            expect(logger.eventText, isEmpty);
+          },
+        );
+
+        testWithoutContext(
+          'does not print slow wireless debugging warning for release mode',
+          () async {
+            final logger = BufferLogger.test();
+            final IOSDevice device = setUpIOSDevice(
+              sdkVersion: '26.0',
+              logger: logger,
+              interfaceType: DeviceConnectionInterface.wireless,
+            );
+
+            device.warnIfSlowWirelessDebugging(DebuggingOptions.disabled(BuildInfo.release));
+
+            expect(logger.warningText, isEmpty);
+            expect(logger.eventText, isEmpty);
+          },
+        );
+      });
 
       group('IOSDevice.startApp attaches in debug mode via device logging', () {
         late FakeMDnsVmServiceDiscovery mdnsDiscovery;
@@ -1477,15 +1588,10 @@ void main() {
             uncompressedBundle: bundleLocation,
             applicationPackage: bundleLocation,
           );
-          final deviceLogReader = FakeDeviceLogReader();
+          final deviceLogReader = FakeSharedIOSDeviceLogReader();
 
           device.portForwarder = const NoOpDevicePortForwarder();
           device.setLogReader(iosApp, deviceLogReader);
-
-          // Start writing messages to the log reader.
-          Timer.run(() {
-            deviceLogReader.addLine(kJITCrashFailureMessage);
-          });
 
           final completer = Completer<void>();
           // device.startApp() asynchronously calls throwToolExit, so we
@@ -1493,6 +1599,10 @@ void main() {
           unawaited(
             runZonedGuarded<Future<void>?>(
               () {
+                // Start writing messages to the log reader.
+                Timer.run(() {
+                  deviceLogReader.addLine(kJITCrashFailureMessage);
+                });
                 unawaited(
                   device.startApp(
                     iosApp,
@@ -1504,7 +1614,7 @@ void main() {
                 return null;
               },
               (Object error, StackTrace stack) {
-                expect(error.toString(), contains(jITCrashFailureInstructions('iOS 18.4')));
+                expect(error.toString(), contains(jitCrashFailureInstructions('iOS 18.4')));
                 completer.complete();
               },
             ),
@@ -1512,6 +1622,73 @@ void main() {
           await completer.future;
         },
       );
+
+      group('with overriden UserMessage', () {
+        late BufferLogger testLogger;
+        setUp(() {
+          testLogger = BufferLogger.test();
+        });
+
+        testUsingContext(
+          'IOSDevice.startApp prints guided message when UIScene error message',
+          () async {
+            final FileSystem fileSystem = MemoryFileSystem.test();
+            final processManager = FakeProcessManager.empty();
+
+            final Directory temporaryXcodeProjectDirectory = fileSystem.systemTempDirectory
+                .childDirectory('flutter_empty_xcode.rand0');
+            final Directory bundleLocation = fileSystem.currentDirectory;
+            final IOSDevice device = setUpIOSDevice(
+              processManager: processManager,
+              fileSystem: fileSystem,
+              isCoreDevice: true,
+              coreDeviceControl: FakeIOSCoreDeviceControl(),
+              xcodeDebug: FakeXcodeDebug(
+                expectedProject: XcodeDebugProject(
+                  scheme: 'Runner',
+                  xcodeWorkspace: temporaryXcodeProjectDirectory.childDirectory(
+                    'Runner.xcworkspace',
+                  ),
+                  xcodeProject: temporaryXcodeProjectDirectory.childDirectory('Runner.xcodeproj'),
+                  hostAppProjectName: 'Runner',
+                ),
+                expectedDeviceId: '123',
+                expectedLaunchArguments: <String>['--enable-dart-profiling'],
+                expectedBundlePath: bundleLocation.path,
+              ),
+            );
+            final IOSApp iosApp = PrebuiltIOSApp(
+              projectBundleId: 'app',
+              bundleName: 'Runner',
+              uncompressedBundle: bundleLocation,
+              applicationPackage: bundleLocation,
+            );
+            final deviceLogReader = FakeSharedIOSDeviceLogReader();
+
+            device.portForwarder = const NoOpDevicePortForwarder();
+            device.setLogReader(iosApp, deviceLogReader);
+
+            Timer.run(() {
+              deviceLogReader.addLine(
+                '`UIScene` lifecycle will soon be required. Failure to adopt will result in an assert in the future.',
+              );
+              deviceLogReader.addLine('The Dart VM service is listening on http://127.0.0.1:456');
+            });
+
+            await device.startApp(
+              iosApp,
+              prebuiltApplication: true,
+              debuggingOptions: DebuggingOptions.enabled(BuildInfo.debug),
+              platformArgs: <String, dynamic>{},
+            );
+            expect(testLogger.warningText, contains('override message'));
+          },
+          overrides: <Type, Generator>{
+            Logger: () => testLogger,
+            UserMessages: () => OverrideUserMessages(),
+          },
+        );
+      });
     });
   });
 }
@@ -1577,7 +1754,7 @@ IOSDevice setUpIOSDevice({
 }
 
 class FakeDevicePortForwarder extends Fake implements DevicePortForwarder {
-  var disposed = false;
+  bool disposed = false;
 
   @override
   Future<void> dispose() async {
@@ -1593,7 +1770,7 @@ class FakeMDnsVmServiceDiscovery extends Fake implements MDnsVmServiceDiscovery 
   bool returnsNull;
   bool allowthrowOnMissingLocalNetworkPermissionsError;
 
-  var completer = Completer<void>();
+  Completer<void> completer = Completer<void>();
   @override
   Future<Uri?> getVMServiceUriForLaunch(
     String applicationId,
@@ -1636,7 +1813,7 @@ class FakeXcodeDebug extends Fake implements XcodeDebug {
   final Completer<void>? completer;
 
   @override
-  var debugStarted = false;
+  bool debugStarted = false;
 
   @override
   Future<XcodeDebugProject> createXcodeProjectWithCustomBundle(
@@ -1685,14 +1862,65 @@ class FakeXcodeDebug extends Fake implements XcodeDebug {
 
 class FakeIOSCoreDeviceControl extends Fake implements IOSCoreDeviceControl {}
 
-class FakeShutDownHooks extends Fake implements ShutdownHooks {
-  var hooks = <ShutdownHook>[];
+class FakeXcode extends Fake implements Xcode {
+  FakeXcode({this.currentVersion});
+
   @override
-  void addShutdownHook(ShutdownHook shutdownHook) {
-    hooks.add(shutdownHook);
+  Version? currentVersion;
+}
+
+class FakeIOSCoreDeviceLauncher extends Fake implements IOSCoreDeviceLauncher {
+  FakeIOSCoreDeviceLauncher({this.lldbLaunchResult = true, this.xcodeLaunchResult = true});
+  bool lldbLaunchResult;
+  bool xcodeLaunchResult;
+  bool launchedWithLLDB = false;
+  bool launchedWithXcode = false;
+
+  Completer<void>? xcodeCompleter;
+
+  @override
+  final coreDeviceLogForwarder = IOSCoreDeviceLogForwarder();
+
+  @override
+  final lldbLogForwarder = LLDBLogForwarder();
+
+  @override
+  Future<bool> launchAppWithLLDBDebugger({
+    required String deviceId,
+    required String bundlePath,
+    required String bundleId,
+    required List<String> launchArguments,
+    required BuildMode mode,
+    required ShutdownHooks shutdownHooks,
+  }) async {
+    launchedWithLLDB = true;
+    return lldbLaunchResult;
+  }
+
+  @override
+  Future<bool> launchAppWithXcodeDebugger({
+    required String deviceId,
+    required DebuggingOptions debuggingOptions,
+    required IOSApp package,
+    required List<String> launchArguments,
+    required TemplateRenderer templateRenderer,
+    String? mainPath,
+    Duration? discoveryTimeout,
+  }) async {
+    if (xcodeCompleter != null) {
+      await xcodeCompleter!.future;
+    }
+    launchedWithXcode = true;
+    return xcodeLaunchResult;
+  }
+
+  @override
+  Future<bool> stopApp({required String deviceId, int? processId}) async {
+    return false;
   }
 }
 
+<<<<<<< HEAD
 class FakeXcode extends Fake implements Xcode {
   FakeXcode({this.currentVersion});
 
@@ -1743,6 +1971,8 @@ class FakeIOSCoreDeviceLauncher extends Fake implements IOSCoreDeviceLauncher {
   }
 }
 
+=======
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
 class FakeAnalytics extends Fake implements Analytics {
   final sentEvents = <Event>[];
 
@@ -1751,3 +1981,52 @@ class FakeAnalytics extends Fake implements Analytics {
     sentEvents.add(event);
   }
 }
+<<<<<<< HEAD
+=======
+
+class FakeIMobileDevice extends Fake implements IMobileDevice {}
+
+class FakeSharedIOSDeviceLogReader extends SharedIOSDeviceLogReader {
+  @override
+  String get name => 'FakeLogReader';
+
+  bool disposed = false;
+
+  final _lineQueue = <String>[];
+  late final _linesController = StreamController<String>.broadcast(onListen: _onListen);
+
+  @override
+  Stream<String> get logLines => _linesController.stream;
+
+  @override
+  StreamController<String> get linesController => _linesController;
+
+  void _onListen() {
+    _lineQueue.forEach(_linesController.add);
+    _lineQueue.clear();
+  }
+
+  void addLine(String line) {
+    if (_linesController.hasListener) {
+      addLogToStream(line);
+    } else {
+      _lineQueue.add(line);
+    }
+  }
+
+  @override
+  Future<void> dispose() async {
+    _lineQueue.clear();
+    await _linesController.close();
+    disposed = true;
+  }
+
+  @override
+  Future<void> provideVmService(FlutterVmService? connectedVmService) async {}
+}
+
+class OverrideUserMessages extends UserMessages {
+  @override
+  String get uiSceneMigrationWarning => 'override message';
+}
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020

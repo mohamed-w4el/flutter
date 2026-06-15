@@ -20,8 +20,9 @@ import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/devfs_web.dart';
 import 'package:flutter_tools/src/isolated/release_asset_server.dart';
 import 'package:flutter_tools/src/isolated/web_asset_server.dart';
-import 'package:flutter_tools/src/isolated/web_server_utlities.dart';
+import 'package:flutter_tools/src/isolated/web_server_utilities.dart';
 import 'package:flutter_tools/src/web/compile.dart';
+import 'package:flutter_tools/src/web/devfs_config.dart';
 import 'package:flutter_tools/src/web_template.dart';
 import 'package:logging/logging.dart' as logging;
 import 'package:meta/meta.dart';
@@ -80,6 +81,7 @@ void main() {
           webRenderer: WebRendererMode.canvaskit,
           useLocalCanvasKit: false,
           fileSystem: globals.fs,
+          logger: logger,
         );
         releaseAssetServer = ReleaseAssetServer(
           globals.fs.file('main.dart').uri,
@@ -328,6 +330,7 @@ void main() {
       webRenderer: WebRendererMode.canvaskit,
       useLocalCanvasKit: false,
       fileSystem: globals.fs,
+      logger: logger,
     );
 
     expect(webAssetServer.basePath, 'foo/bar');
@@ -349,6 +352,7 @@ void main() {
       webRenderer: WebRendererMode.canvaskit,
       useLocalCanvasKit: false,
       fileSystem: globals.fs,
+      logger: logger,
     );
 
     // Defaults to "/" when there's no base element.
@@ -372,6 +376,7 @@ void main() {
         webRenderer: WebRendererMode.canvaskit,
         useLocalCanvasKit: false,
         fileSystem: globals.fs,
+        logger: logger,
       ),
       throwsToolExit(),
     );
@@ -394,6 +399,7 @@ void main() {
         webRenderer: WebRendererMode.canvaskit,
         useLocalCanvasKit: false,
         fileSystem: globals.fs,
+        logger: logger,
       ),
       throwsToolExit(),
     );
@@ -783,11 +789,8 @@ void main() {
       final ResidentCompiler residentCompiler = FakeResidentCompiler()
         ..output = const CompilerOutput('a', 0, <Uri>[]);
 
+      const webDevServerConfig = WebDevServerConfig();
       final webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -801,11 +804,10 @@ void main() {
           packageConfigPath: '.dart_tool/package_config.json',
         ),
         enableDwds: false,
-        enableDds: false,
+        ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
         entrypoint: Uri.base,
         testMode: true,
         expressionCompiler: null,
-        extraHeaders: const <String, String>{},
         chromiumLauncher: null,
         ddcModuleSystem: usesDdcModuleSystem,
         canaryFeatures: canaryFeatures,
@@ -813,9 +815,11 @@ void main() {
         isWasm: false,
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
+        webDevServerConfig: webDevServerConfig,
         fileSystem: globals.fs,
         logger: globals.logger,
         platform: globals.platform,
+        webCrossOriginIsolation: false,
       );
       webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
       webDevFS.flutterJs.createSync(recursive: true);
@@ -892,12 +896,8 @@ void main() {
         outputFile.parent.childFile('a.map').writeAsStringSync('{}');
         outputFile.parent.childFile('a.metadata').writeAsStringSync('{}');
 
+        const webDevServerConfig = WebDevServerConfig();
         final webDevFS = WebDevFS(
-          // if this is any other value, we will do a real ip lookup
-          hostname: 'any',
-          port: 0,
-          tlsCertPath: null,
-          tlsCertKeyPath: null,
           packagesFilePath: '.dart_tool/package_config.json',
           urlTunneller: null,
           useSseForDebugProxy: true,
@@ -911,11 +911,10 @@ void main() {
             packageConfigPath: '.dart_tool/package_config.json',
           ),
           enableDwds: true,
-          enableDds: false,
+          ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
           entrypoint: Uri.base,
           testMode: true,
           expressionCompiler: null,
-          extraHeaders: const <String, String>{},
           chromiumLauncher: null,
           ddcModuleSystem: usesDdcModuleSystem,
           canaryFeatures: canaryFeatures,
@@ -923,9 +922,11 @@ void main() {
           isWasm: false,
           useLocalCanvasKit: false,
           rootDirectory: globals.fs.currentDirectory,
+          webDevServerConfig: webDevServerConfig,
           fileSystem: globals.fs,
           logger: globals.logger,
           platform: globals.platform,
+          webCrossOriginIsolation: false,
         );
         webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
         webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -974,11 +975,8 @@ void main() {
     outputFile.parent.childFile('a.json').writeAsStringSync('{}');
     outputFile.parent.childFile('a.map').writeAsStringSync('{}');
 
+    const webDevServerConfig = WebDevServerConfig();
     final webDevFS = WebDevFS(
-      hostname: 'any',
-      port: 0,
-      tlsCertPath: null,
-      tlsCertKeyPath: null,
       packagesFilePath: '.dart_tool/package_config.json',
       urlTunneller: null,
       useSseForDebugProxy: true,
@@ -986,11 +984,10 @@ void main() {
       useSseForInjectedClient: true,
       buildInfo: BuildInfo.debug,
       enableDwds: false,
-      enableDds: false,
+      ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
       entrypoint: Uri.base,
       testMode: true,
       expressionCompiler: null,
-      extraHeaders: const <String, String>{},
       chromiumLauncher: null,
       nativeNullAssertions: true,
       ddcModuleSystem: usesDdcModuleSystem,
@@ -999,9 +996,11 @@ void main() {
       isWasm: false,
       useLocalCanvasKit: false,
       rootDirectory: globals.fs.currentDirectory,
+      webDevServerConfig: webDevServerConfig,
       fileSystem: globals.fs,
       logger: globals.logger,
       platform: globals.platform,
+      webCrossOriginIsolation: false,
     );
     webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
     webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1019,11 +1018,8 @@ void main() {
     outputFile.parent.childFile('a.json').writeAsStringSync('{}');
     outputFile.parent.childFile('a.map').writeAsStringSync('{}');
 
+    const webDevServerConfig = WebDevServerConfig();
     final webDevFS = WebDevFS(
-      hostname: 'localhost',
-      port: 0,
-      tlsCertPath: null,
-      tlsCertKeyPath: null,
       packagesFilePath: '.dart_tool/package_config.json',
       urlTunneller: null,
       useSseForDebugProxy: true,
@@ -1038,11 +1034,10 @@ void main() {
         packageConfigPath: '.dart_tool/package_config.json',
       ),
       enableDwds: false,
-      enableDds: false,
+      ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
       entrypoint: Uri.base,
       testMode: true,
       expressionCompiler: null,
-      extraHeaders: const <String, String>{},
       chromiumLauncher: null,
       ddcModuleSystem: usesDdcModuleSystem,
       canaryFeatures: canaryFeatures,
@@ -1050,9 +1045,11 @@ void main() {
       isWasm: false,
       useLocalCanvasKit: false,
       rootDirectory: globals.fs.currentDirectory,
+      webDevServerConfig: webDevServerConfig,
       fileSystem: globals.fs,
       logger: globals.logger,
       platform: globals.platform,
+      webCrossOriginIsolation: false,
     );
     webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
     webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1077,11 +1074,10 @@ void main() {
     final String dummyCertPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-cert.pem');
     final String dummyCertKeyPath = globals.fs.path.join(dataPath, 'tls_cert', 'dummy-key.pem');
 
+    final webDevServerConfig = WebDevServerConfig(
+      https: HttpsConfig(certPath: dummyCertPath, certKeyPath: dummyCertKeyPath),
+    );
     final webDevFS = WebDevFS(
-      hostname: 'localhost',
-      port: 0,
-      tlsCertPath: dummyCertPath,
-      tlsCertKeyPath: dummyCertKeyPath,
       packagesFilePath: '.dart_tool/package_config.json',
       urlTunneller: null,
       useSseForDebugProxy: true,
@@ -1090,11 +1086,10 @@ void main() {
       nativeNullAssertions: true,
       buildInfo: BuildInfo.debug,
       enableDwds: false,
-      enableDds: false,
+      ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
       entrypoint: Uri.base,
       testMode: true,
       expressionCompiler: null,
-      extraHeaders: const <String, String>{},
       chromiumLauncher: null,
       ddcModuleSystem: usesDdcModuleSystem,
       canaryFeatures: canaryFeatures,
@@ -1102,9 +1097,11 @@ void main() {
       isWasm: false,
       useLocalCanvasKit: false,
       rootDirectory: globals.fs.currentDirectory,
+      webDevServerConfig: webDevServerConfig,
       fileSystem: globals.fs,
       logger: globals.logger,
       platform: globals.platform,
+      webCrossOriginIsolation: false,
     );
     webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
     webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1120,11 +1117,8 @@ void main() {
   test(
     'allows frame embedding',
     () => testbed.run(() async {
+      const webDevServerConfig = WebDevServerConfig();
       final WebAssetServer webAssetServer = await WebAssetServer.start(
-        null,
-        'localhost',
-        0,
-        null,
         null,
         null,
         true,
@@ -1137,17 +1131,18 @@ void main() {
           packageConfigPath: '.dart_tool/package_config.json',
         ),
         false,
-        false,
+        const DartDevelopmentServiceConfiguration(enable: false),
         Uri.base,
         null,
-        const <String, String>{},
         webRenderer: WebRendererMode.canvaskit,
         isWasm: false,
         useLocalCanvasKit: false,
         testMode: true,
+        webDevServerConfig: webDevServerConfig,
         fileSystem: globals.fs,
         logger: globals.logger,
         platform: globals.platform,
+        crossOriginIsolation: false,
       );
 
       expect(webAssetServer.defaultResponseHeaders['x-frame-options'], null);
@@ -1160,11 +1155,10 @@ void main() {
     () => testbed.run(() async {
       const extraHeaderKey = 'hurray';
       const extraHeaderValue = 'flutter';
+      const webDevServerConfig = WebDevServerConfig(
+        headers: <String, String>{extraHeaderKey: extraHeaderValue},
+      );
       final WebAssetServer webAssetServer = await WebAssetServer.start(
-        null,
-        'localhost',
-        0,
-        null,
         null,
         null,
         true,
@@ -1177,17 +1171,18 @@ void main() {
           packageConfigPath: '.dart_tool/package_config.json',
         ),
         false,
-        false,
+        const DartDevelopmentServiceConfiguration(enable: false),
         Uri.base,
         null,
-        const <String, String>{extraHeaderKey: extraHeaderValue},
         webRenderer: WebRendererMode.canvaskit,
         isWasm: false,
         useLocalCanvasKit: false,
         testMode: true,
+        webDevServerConfig: webDevServerConfig,
         fileSystem: globals.fs,
         logger: globals.logger,
         platform: globals.platform,
+        crossOriginIsolation: false,
       );
 
       expect(webAssetServer.defaultResponseHeaders[extraHeaderKey], <String>[extraHeaderValue]);
@@ -1226,6 +1221,7 @@ void main() {
       webRenderer: WebRendererMode.canvaskit,
       useLocalCanvasKit: false,
       fileSystem: globals.fs,
+      logger: logger,
     );
 
     expect(await webAssetServer.metadataContents('foo/main_module.ddc_merged_metadata'), null);
@@ -1250,11 +1246,8 @@ void main() {
       outputFile.parent.childFile('a.map').writeAsStringSync('{}');
       outputFile.parent.childFile('a.metadata').writeAsStringSync('{}');
 
+      const webDevServerConfig = WebDevServerConfig();
       final webDevFS = WebDevFS(
-        hostname: 'localhost',
-        port: 0,
-        tlsCertPath: null,
-        tlsCertKeyPath: null,
         packagesFilePath: '.dart_tool/package_config.json',
         urlTunneller: null,
         useSseForDebugProxy: true,
@@ -1263,11 +1256,10 @@ void main() {
         nativeNullAssertions: true,
         buildInfo: BuildInfo.debug,
         enableDwds: false,
-        enableDds: false,
+        ddsConfig: const DartDevelopmentServiceConfiguration(enable: false),
         entrypoint: Uri.base,
         testMode: true,
         expressionCompiler: null,
-        extraHeaders: const <String, String>{},
         chromiumLauncher: null,
         ddcModuleSystem: usesDdcModuleSystem,
         canaryFeatures: canaryFeatures,
@@ -1275,9 +1267,11 @@ void main() {
         isWasm: false,
         useLocalCanvasKit: false,
         rootDirectory: globals.fs.currentDirectory,
+        webDevServerConfig: webDevServerConfig,
         fileSystem: globals.fs,
         logger: globals.logger,
         platform: globals.platform,
+        webCrossOriginIsolation: false,
       );
       webDevFS.ddcModuleLoaderJS.createSync(recursive: true);
       webDevFS.stackTraceMapper.createSync(recursive: true);
@@ -1296,7 +1290,7 @@ void main() {
 }
 
 class FakeHttpServer extends Fake implements HttpServer {
-  var closed = false;
+  bool closed = false;
 
   @override
   Future<void> close({bool force = false}) async {

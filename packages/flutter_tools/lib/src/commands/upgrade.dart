@@ -99,13 +99,17 @@ class UpgradeCommand extends FlutterCommand {
       force: boolArg('force'),
       testFlow: stringArg('working-directory') != null,
       gitTagVersion: GitTagVersion.determine(
-        globals.processUtils,
         globals.platform,
+        git: globals.git,
         workingDirectory: _commandRunner.workingDirectory,
       ),
       flutterVersion: stringArg('working-directory') == null
           ? globals.flutterVersion
-          : FlutterVersion(flutterRoot: _commandRunner.workingDirectory!, fs: globals.fs),
+          : FlutterVersion(
+              flutterRoot: _commandRunner.workingDirectory!,
+              fs: globals.fs,
+              git: globals.git,
+            ),
       verifyOnly: boolArg('verify-only'),
     );
   }
@@ -135,7 +139,7 @@ class UpgradeCommandRunner {
   String? workingDirectory; // set in runCommand() above
 
   @visibleForTesting
-  var clock = const SystemClock();
+  SystemClock clock = const SystemClock();
 
   Future<FlutterCommandResult> runCommand(
     UpgradePhase phase, {
@@ -235,6 +239,10 @@ class UpgradeCommandRunner {
       'Upgrading Flutter to ${upstreamVersion.frameworkVersion} from ${flutterVersion.frameworkVersion} in $workingDirectory...',
     );
     await attemptReset(upstreamVersion.frameworkRevision);
+
+    // Regenerate the version file based on the latest branch state during the second half.
+    flutterVersion.deleteVersionFile();
+
     if (!testFlow) {
       await flutterUpgradeContinue(startedAt: startedAt);
     }
@@ -251,7 +259,7 @@ class UpgradeCommandRunner {
   @visibleForTesting
   Future<void> flutterUpgradeContinue({required DateTime startedAt}) async {
     final int code = await globals.processUtils.stream(
-      <String>[
+      [
         globals.fs.path.join('bin', 'flutter'),
         'upgrade',
         '--continue',
@@ -300,8 +308,8 @@ class UpgradeCommandRunner {
   @protected
   Future<bool> hasUncommittedChanges() async {
     try {
-      final RunResult result = await globals.processUtils.run(
-        <String>['git', 'status', '-s'],
+      final RunResult result = await globals.git.run(
+        ['status', '-s'],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
@@ -325,14 +333,14 @@ class UpgradeCommandRunner {
     String revision;
     try {
       // Fetch upstream branch's commits and tags
-      await globals.processUtils.run(
-        <String>['git', 'fetch', '--tags'],
+      await globals.git.run(
+        ['fetch', '--tags'],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
       // Get the latest commit revision of the upstream
-      final RunResult result = await globals.processUtils.run(
-        <String>['git', 'rev-parse', '--verify', kGitTrackingUpstream],
+      final RunResult result = await globals.git.run(
+        ['rev-parse', '--verify', kGitTrackingUpstream],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
@@ -374,6 +382,7 @@ class UpgradeCommandRunner {
       flutterRoot: workingDirectory!,
       frameworkRevision: revision,
       fs: globals.fs,
+      git: globals.git,
     );
   }
 
@@ -385,8 +394,8 @@ class UpgradeCommandRunner {
   @visibleForTesting
   Future<void> attemptReset(String newRevision) async {
     try {
-      await globals.processUtils.run(
-        <String>['git', 'reset', '--hard', newRevision],
+      await globals.git.run(
+        ['reset', '--hard', newRevision],
         throwOnError: true,
         workingDirectory: workingDirectory,
       );
@@ -417,7 +426,7 @@ class UpgradeCommandRunner {
     globals.printStatus('');
     globals.printStatus('Running flutter doctor...');
     await globals.processUtils.stream(
-      <String>[globals.fs.path.join('bin', 'flutter'), '--no-version-check', 'doctor'],
+      [globals.fs.path.join('bin', 'flutter'), '--no-version-check', 'doctor'],
       workingDirectory: workingDirectory,
       allowReentrantFlutter: true,
     );
@@ -433,12 +442,7 @@ Future<void> precacheArtifacts([String? workingDirectory]) async {
   globals.printStatus('');
   globals.printStatus('Upgrading engine...');
   final int code = await globals.processUtils.stream(
-    <String>[
-      globals.fs.path.join('bin', 'flutter'),
-      '--no-color',
-      '--no-version-check',
-      'precache',
-    ],
+    [globals.fs.path.join('bin', 'flutter'), '--no-color', '--no-version-check', 'precache'],
     allowReentrantFlutter: true,
     environment: Map<String, String>.of(globals.platform.environment),
     workingDirectory: workingDirectory,

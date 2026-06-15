@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+/// @docImport '../resident_runner.dart';
+library;
+
 import 'dart:async';
 
 import 'package:meta/meta.dart';
@@ -28,6 +31,7 @@ import '../device_vm_service_discovery_for_attach.dart';
 import '../features.dart';
 import '../globals.dart' as globals;
 import '../macos/xcdevice.dart';
+import '../macos/xcode.dart';
 import '../mdns_discovery.dart';
 import '../project.dart';
 import '../protocol_discovery.dart';
@@ -37,16 +41,18 @@ import 'core_devices.dart';
 import 'ios_deploy.dart';
 import 'ios_workflow.dart';
 import 'iproxy.dart';
+import 'lldb.dart';
 import 'mac.dart';
 import 'xcode_build_settings.dart';
 import 'xcode_debug.dart';
 import 'xcodeproj.dart';
 
+const kJITCrashLogInterceptorIdentifier = 'jit_crash_log';
 const kJITCrashFailureMessage =
     'Crash occurred when compiling unknown function in unoptimized JIT mode in unknown pass';
 
 @visibleForTesting
-String jITCrashFailureInstructions(String deviceVersion) =>
+String jitCrashFailureInstructions(String deviceVersion) =>
     '''
 ════════════════════════════════════════════════════════════════════════════════
 A change to iOS has caused a temporary break in Flutter's debug mode on
@@ -234,14 +240,26 @@ class IOSDevices extends PollingDeviceDiscovery {
   @override
   Future<void> stopPolling() async {
     await _observedDeviceEventsSubscription?.cancel();
+    _observedDeviceEventsSubscription = null;
+    xcdevice.cancelWirelessDiscovery();
   }
 
   @override
-  Future<List<Device>> pollingGetDevices({Duration? timeout}) async {
+  Future<void> cancelWirelessDiscovery() async {
+    xcdevice.cancelWirelessDiscovery();
+  }
+
+  @override
+  Future<List<Device>> pollingGetDevices({
+    Duration? timeout,
+    bool forWirelessDiscovery = false,
+  }) async {
     if (!_platform.isMacOS) {
       throw UnsupportedError('Control of iOS devices or simulators only supported on macOS.');
     }
-
+    if (forWirelessDiscovery) {
+      return xcdevice.getAvailableIOSDevicesForWirelessDiscovery(timeout: timeout);
+    }
     return xcdevice.getAvailableIOSDevices(timeout: timeout);
   }
 
@@ -354,10 +372,10 @@ class IOSDevice extends Device {
   @override
   bool isConnected;
 
-  var devModeEnabled = false;
+  bool devModeEnabled = false;
 
   /// Device has trusted this computer and paired.
-  var isPaired = false;
+  bool isPaired = false;
 
   /// CoreDevice is a device connectivity stack introduced in Xcode 15. Devices
   /// with iOS 17 or greater are CoreDevices.
@@ -414,8 +432,11 @@ class IOSDevice extends Device {
     int installationResult;
     try {
       if (isCoreDevice) {
-        installationResult =
-            await _coreDeviceControl.installApp(deviceId: id, bundlePath: bundle.path) ? 0 : 1;
+        final (bool installSuccess, _) = await _coreDeviceControl.installApp(
+          deviceId: id,
+          bundlePath: bundle.path,
+        );
+        installationResult = installSuccess ? 0 : 1;
       } else {
         installationResult = await _iosDeploy.installApp(
           deviceId: id,
@@ -486,6 +507,8 @@ class IOSDevice extends Device {
       );
     }
 
+    warnIfSlowWirelessDebugging(debuggingOptions);
+
     if (!prebuiltApplication) {
       _logger.printTrace('Building ${package.name} for $id');
 
@@ -508,6 +531,7 @@ class IOSDevice extends Device {
           logger: globals.logger,
           platform: FlutterDarwinPlatform.ios,
           project: package.project.parent,
+          device: this,
         );
         _logger.printError('');
         return LaunchResult.failed();
@@ -537,6 +561,15 @@ class IOSDevice extends Device {
     try {
       ProtocolDiscovery? vmServiceDiscovery;
       var installationResult = 1;
+
+      final DeviceLogReader deviceLogReader = getLogReader(
+        app: package,
+        usingCISystem: debuggingOptions.usingCISystem,
+      );
+      if (deviceLogReader is SharedIOSDeviceLogReader) {
+        await _addLogInterceptors(deviceLogReader);
+      }
+
       if (debuggingOptions.debuggingEnabled) {
         _logger.printTrace('Debugging is enabled, connecting to vmService');
         vmServiceDiscovery = _setupDebuggerAndVmServiceDiscovery(
@@ -643,6 +676,7 @@ class IOSDevice extends Device {
           packageId: packageId,
           vmServiceDiscovery: vmServiceDiscovery,
           package: package,
+          deviceLogReader: deviceLogReader,
         );
       } else if (isWirelesslyConnected) {
         // Wait for the Dart VM url to be discovered via logs (from `ios-deploy`)
@@ -766,11 +800,62 @@ class IOSDevice extends Device {
     }
   }
 
+  @visibleForTesting
+  void warnIfSlowWirelessDebugging(DebuggingOptions debuggingOptions) {
+    // The minimum iOS version where wireless debugging is known to be slow.
+    const minSlowWirelessDebugIOSVersion = 26;
+    final Version? sdkVersion = this.sdkVersion;
+
+    if (!isWirelesslyConnected ||
+        !debuggingOptions.debuggingEnabled ||
+        sdkVersion == null ||
+        sdkVersion.major < minSlowWirelessDebugIOSVersion) {
+      return;
+    }
+
+    final warningMessage =
+        'Wireless debugging on iOS ${sdkVersion.major} may be slower than expected. '
+        'For better performance, consider using a wired (USB) connection.';
+
+    _logger.printWarning(warningMessage);
+
+    _logger.sendEvent('app.warning', <String, Object?>{
+      'warningId': 'ios-wireless-slow',
+      'warning': warningMessage,
+      'category': 'ios-wireless-performance',
+      'deviceId': id,
+      'deviceOsVersion': sdkVersion.major,
+      'actionable': true,
+    });
+  }
+
   void _printInstallError(Directory bundle) {
     _logger.printError('Could not run ${bundle.path} on $id.');
     _logger.printError('Try launching Xcode and selecting "Product > Run" to fix the problem:');
     _logger.printError('  open ios/Runner.xcworkspace');
     _logger.printError('');
+  }
+
+  Future<void> _addLogInterceptors(SharedIOSDeviceLogReader deviceLogReader) async {
+    final String? uisceneWarning = globals.userMessages.uiSceneMigrationWarning;
+    if (uisceneWarning != null) {
+      final uisceneWarningInterceptor = LogInterceptor(
+        identifier: 'uiscene_requirement',
+        pattern: RegExp(
+          '`UIScene` lifecycle will soon be required|This process does not adopt UIScene lifecycle',
+        ),
+        action: () {
+          globals.printWarning(uisceneWarning);
+        },
+        excludeFromStream: true,
+      );
+      deviceLogReader.addLogInterceptor(uisceneWarningInterceptor);
+    }
+
+    final LogInterceptor? jitCrashInterceptor = await _jitCrashInterceptor();
+    if (jitCrashInterceptor != null) {
+      deviceLogReader.addLogInterceptor(jitCrashInterceptor);
+    }
   }
 
   /// Find the Dart VM url using ProtocolDiscovery (logs from `idevicesyslog`)
@@ -782,6 +867,7 @@ class IOSDevice extends Device {
     required DebuggingOptions debuggingOptions,
     ProtocolDiscovery? vmServiceDiscovery,
     IOSApp? package,
+    required DeviceLogReader deviceLogReader,
   }) async {
     Timer? maxWaitForCI;
     final cancelCompleter = Completer<Uri?>();
@@ -823,11 +909,6 @@ class IOSDevice extends Device {
       });
     }
 
-    final StreamSubscription<String>? errorListener = await _interceptErrorsFromLogs(
-      package,
-      debuggingOptions: debuggingOptions,
-    );
-
     final bool discoverVMUrlFromLogs = vmServiceDiscovery != null && !isWirelesslyConnected;
 
     // If mDNS fails, don't throw since url may still be findable through vmServiceDiscovery.
@@ -860,38 +941,30 @@ class IOSDevice extends Device {
       }
     }
     maxWaitForCI?.cancel();
-    await errorListener?.cancel();
+    if (deviceLogReader is SharedIOSDeviceLogReader) {
+      deviceLogReader.removeLogInterceptorByIdentifier(kJITCrashLogInterceptorIdentifier);
+    }
     return localUri;
   }
 
   /// Listen to device logs for crash on iOS 18.4+ due to JIT restriction. If
   /// found, give guided error and throw tool exit. Returns null and does not
   /// listen if device is less than iOS 18.4.
-  Future<StreamSubscription<String>?> _interceptErrorsFromLogs(
-    IOSApp? package, {
-    required DebuggingOptions debuggingOptions,
-  }) async {
+  Future<LogInterceptor?> _jitCrashInterceptor() async {
     // Currently only checking for kJITCrashFailureMessage, which only should
     // be checked on iOS 18.4+.
     if (sdkVersion == null || sdkVersion! < Version(18, 4, null)) {
       return null;
     }
-    final DeviceLogReader deviceLogReader = getLogReader(
-      app: package,
-      usingCISystem: debuggingOptions.usingCISystem,
-    );
-
-    final Stream<String> logStream = deviceLogReader.logLines;
-
     final String deviceSdkVersion = await sdkNameAndVersion;
-
-    final StreamSubscription<String> errorListener = logStream.listen((String line) {
-      if (line.contains(kJITCrashFailureMessage)) {
-        throwToolExit(jITCrashFailureInstructions(deviceSdkVersion));
-      }
-    });
-
-    return errorListener;
+    return LogInterceptor(
+      identifier: kJITCrashLogInterceptorIdentifier,
+      pattern: kJITCrashFailureMessage,
+      action: () {
+        throwToolExit(jitCrashFailureInstructions(deviceSdkVersion));
+      },
+      excludeFromStream: false,
+    );
   }
 
   ProtocolDiscovery _setupDebuggerAndVmServiceDiscovery({
@@ -906,7 +979,6 @@ class IOSDevice extends Device {
       app: package,
       usingCISystem: debuggingOptions.usingCISystem,
     );
-
     // If the device supports syslog reading, prefer launching the app without
     // attaching the debugger to avoid the overhead of the unnecessary extra running process.
     if (majorSdkVersion >= IOSDeviceLogReader.minimumUniversalLoggingSdkVersion) {
@@ -964,7 +1036,7 @@ class IOSDevice extends Device {
       // Release mode
 
       // Install app to device
-      final bool installSuccess = await _coreDeviceControl.installApp(
+      final (bool installSuccess, _) = await _coreDeviceControl.installApp(
         deviceId: id,
         bundlePath: package.deviceBundlePath,
       );
@@ -981,6 +1053,7 @@ class IOSDevice extends Device {
       final bool launchSuccess = launchResult != null && launchResult.outcome == 'success';
 
       return (launchSuccess, IOSDeploymentMethod.coreDeviceWithoutDebugger);
+<<<<<<< HEAD
     }
 
     IOSDeploymentMethod? deploymentMethod;
@@ -1083,6 +1156,120 @@ class IOSDevice extends Device {
       return (false, deploymentMethod);
     }
 
+=======
+    }
+
+    IOSDeploymentMethod? deploymentMethod;
+
+    // Xcode 16 introduced a way to start and attach to a debugserver through LLDB.
+    // However, it doesn't work reliably until Xcode 26.
+    // Use LLDB if Xcode version is greater than 26 and the feature is enabled.
+    final Version? xcodeVersion = globals.xcode?.currentVersion;
+    final bool lldbFeatureEnabled = featureFlags.isLLDBDebuggingEnabled;
+    if (xcodeVersion != null && xcodeVersion.major >= 26 && lldbFeatureEnabled) {
+      final DeviceLogReader deviceLogReader = getLogReader(
+        app: package,
+        usingCISystem: debuggingOptions.usingCISystem,
+      );
+      if (deviceLogReader is IOSDeviceLogReader) {
+        await deviceLogReader.listenToCoreDeviceLauncher(_coreDeviceLauncher);
+      }
+
+      final bool launchSuccess = await _coreDeviceLauncher.launchAppWithLLDBDebugger(
+        deviceId: id,
+        bundlePath: package.deviceBundlePath,
+        bundleId: package.id,
+        launchArguments: launchArguments,
+        shutdownHooks: globals.shutdownHooks,
+        mode: debuggingOptions.buildInfo.mode,
+      );
+
+      // If it succeeds to launch with LLDB, return, otherwise continue on to
+      // try launching with Xcode.
+      if (launchSuccess) {
+        return (launchSuccess, IOSDeploymentMethod.coreDeviceWithLLDB);
+      } else {
+        deploymentMethod = IOSDeploymentMethod.coreDeviceWithXcodeFallback;
+        _analytics.send(
+          Event.appleUsageEvent(
+            workflow: 'ios-physical-deployment',
+            parameter: IOSDeploymentMethod.coreDeviceWithLLDB.name,
+            result: 'launch failed',
+          ),
+        );
+      }
+    }
+
+    deploymentMethod ??= IOSDeploymentMethod.coreDeviceWithXcode;
+
+    // If LLDB is not available or fails, fallback to using Xcode.
+    _logger.printStatus(
+      'You may be prompted to give access to control Xcode. Flutter uses Xcode '
+      'to run your app. If access is not allowed, you can change this through '
+      'your Settings > Privacy & Security > Automation.',
+    );
+    final launchTimeout = isWirelesslyConnected ? 45 : 30;
+    final timer = Timer(discoveryTimeout ?? Duration(seconds: launchTimeout), () {
+      _logger.printError(
+        'Xcode is taking longer than expected to start debugging the app. '
+        'If the issue persists, try closing Xcode and re-running your Flutter command.',
+      );
+    });
+
+    XcodeDebugProject debugProject;
+    final FlutterProject flutterProject = FlutterProject.current();
+
+    if (package is PrebuiltIOSApp) {
+      debugProject = await _xcodeDebug.createXcodeProjectWithCustomBundle(
+        package.deviceBundlePath,
+        templateRenderer: globals.templateRenderer,
+        verboseLogging: _logger.isVerbose,
+      );
+    } else if (package is BuildableIOSApp) {
+      // Before installing/launching/debugging with Xcode, update the build
+      // settings to use a custom configuration build directory so Xcode
+      // knows where to find the app bundle to launch.
+      final Directory bundle = _fileSystem.directory(package.deviceBundlePath);
+      await updateGeneratedXcodeProperties(
+        project: flutterProject,
+        buildInfo: debuggingOptions.buildInfo,
+        targetOverride: mainPath,
+        configurationBuildDir: bundle.parent.absolute.path,
+      );
+
+      final IosProject project = package.project;
+      final XcodeProjectInfo? projectInfo = await project.projectInfo();
+      if (projectInfo == null) {
+        globals.printError('Xcode project not found.');
+        return (false, deploymentMethod);
+      }
+      if (project.xcodeWorkspace == null) {
+        globals.printError('Unable to get Xcode workspace.');
+        return (false, deploymentMethod);
+      }
+      final String? scheme = projectInfo.schemeFor(debuggingOptions.buildInfo);
+      if (scheme == null) {
+        projectInfo.reportFlavorNotFoundAndExit();
+      }
+
+      _xcodeDebug.ensureXcodeDebuggerLaunchAction(project.xcodeProjectSchemeFile(scheme: scheme));
+
+      debugProject = XcodeDebugProject(
+        scheme: scheme,
+        xcodeProject: project.xcodeProject,
+        xcodeWorkspace: project.xcodeWorkspace!,
+        hostAppProjectName: project.hostAppProjectName,
+        expectedConfigurationBuildDir: bundle.parent.absolute.path,
+        verboseLogging: _logger.isVerbose,
+      );
+    } else {
+      // This should not happen. Currently, only PrebuiltIOSApp and
+      // BuildableIOSApp extend from IOSApp.
+      _logger.printError('IOSApp type ${package.runtimeType} is not recognized.');
+      return (false, deploymentMethod);
+    }
+
+>>>>>>> c9a6c484230f8b5e408ec57be1ef71dee1e77020
     // Core Devices (iOS 17 devices) are debugged through Xcode so don't
     // include these flags, which are used to check if the app was launched
     // via Flutter CLI and `ios-deploy`.
@@ -1138,6 +1325,7 @@ class IOSDevice extends Device {
         app: app,
         iMobileDevice: _iMobileDevice,
         usingCISystem: usingCISystem,
+        xcode: globals.xcode,
       ),
     );
   }
@@ -1291,8 +1479,98 @@ String decodeSyslog(String line) {
   }
 }
 
-class IOSDeviceLogReader extends DeviceLogReader {
+/// When receiving logs from a device, a [LogInterceptor] can be used to match against a log and
+/// perform an [action] if the [pattern] matches.
+class LogInterceptor {
+  LogInterceptor({
+    required this.identifier,
+    required this.pattern,
+    required this.action,
+    required this.excludeFromStream,
+  });
+
+  /// Unique identifier to make for easy removal from a list.
+  final String identifier;
+
+  /// Logs will be checked to see if they contain the [pattern].
+  final Pattern pattern;
+
+  /// If the log contain the [pattern], the [action] will be called.
+  final void Function() action;
+
+  /// If `true`, the log will be excluded from being added to the stream.
+  final bool excludeFromStream;
+}
+
+/// Shared logic between iOS device log readers, such as [IOSDeviceLogReader]
+/// for physical iOS devices and _IOSSimulatorLogReader for simulators.
+abstract class SharedIOSDeviceLogReader extends DeviceLogReader {
+  @visibleForOverriding
+  /// [StreamController] for iOS device logs.
+  StreamController<String> get linesController;
+
+  /// Interceptors that should be checked with every log.
+  final List<LogInterceptor> _logInterceptors = [];
+
+  void addLogInterceptor(LogInterceptor interceptor) {
+    _logInterceptors.add(interceptor);
+  }
+
+  /// Once removed, the [LogInterceptor] will no longer intercept logs.
+  void removeLogInterceptor(LogInterceptor interceptor) {
+    _logInterceptors.remove(interceptor);
+  }
+
+  /// Remove where [LogInterceptor.identifier] matches [identifier]. Once removed, the
+  /// [LogInterceptor] will no longer intercept logs.
+  void removeLogInterceptorByIdentifier(String identifier) {
+    _logInterceptors.removeWhere((item) => item.identifier == identifier);
+  }
+
+  /// Checks if the [message] matches any [_logInterceptors] and performs the corresponding action
+  /// of the first matched interceptor.
+  ///
+  /// Returns `true` if the log should be not added to the [StreamController] to be displayed to the user.
+  bool _interceptLog(String message) {
+    for (final LogInterceptor interceptor in _logInterceptors) {
+      if (message.contains(interceptor.pattern)) {
+        interceptor.action();
+        if (interceptor.excludeFromStream) {
+          return true;
+        }
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// Adds [message] to the [linesController] if the [StreamController] is open and the log is not
+  /// intercepted.
+  void addLogToStream(String message) {
+    // Sometimes (race condition?) we try to send a log after the controller has
+    // been closed. See https://github.com/flutter/flutter/issues/99021 for more
+    // context.
+    if (!linesController.isClosed && !_interceptLog(message)) {
+      linesController.add(message);
+    }
+  }
+}
+
+/// Listens to multiple logging sources to get the logs from the physical iOS device.
+///
+/// Potential logging sources include:
+///   * `idevicesyslog`
+///   * `ios-deploy`
+///   * `devicectl` and `lldb`
+///   * Unified Logging (Dart VM)
+///
+/// Not all logging sources work on all devices. See [logSources] for limitations.
+///
+/// Logs are added to the [linesController] and consumed through the [logLines] stream by
+/// [FlutterDevice.startEchoingDeviceLog].
+class IOSDeviceLogReader extends SharedIOSDeviceLogReader {
   IOSDeviceLogReader._(
+    this._xcode,
     this._iMobileDevice,
     this._majorSdkVersion,
     this._deviceId,
@@ -1313,10 +1591,12 @@ class IOSDeviceLogReader extends DeviceLogReader {
     required IOSDevice device,
     IOSApp? app,
     required IMobileDevice iMobileDevice,
+    required Xcode? xcode,
     bool usingCISystem = false,
   }) {
     final String appName = app?.name?.replaceAll('.app', '') ?? '';
     return IOSDeviceLogReader._(
+      xcode,
       iMobileDevice,
       device.majorSdkVersion,
       device.id,
@@ -1331,6 +1611,7 @@ class IOSDeviceLogReader extends DeviceLogReader {
   /// Create an [IOSDeviceLogReader] for testing.
   factory IOSDeviceLogReader.test({
     required IMobileDevice iMobileDevice,
+    required Xcode? xcode,
     bool useSyslog = true,
     bool usingCISystem = false,
     int? majorSdkVersion,
@@ -1339,6 +1620,7 @@ class IOSDeviceLogReader extends DeviceLogReader {
   }) {
     final int sdkVersion = majorSdkVersion ?? (useSyslog ? 12 : 13);
     return IOSDeviceLogReader._(
+      xcode,
       iMobileDevice,
       sdkVersion,
       '1234',
@@ -1357,6 +1639,7 @@ class IOSDeviceLogReader extends DeviceLogReader {
   final bool _isWirelesslyConnected;
   final bool _isCoreDevice;
   final IMobileDevice _iMobileDevice;
+  final Xcode? _xcode;
   final bool _usingCISystem;
 
   // Matches a syslog line from the runner.
@@ -1374,30 +1657,26 @@ class IOSDeviceLogReader extends DeviceLogReader {
   // Logging from the dart code has no prefixing metadata.
   final _debuggerLoggingRegex = RegExp(r'^\S* \S* \S*\[[0-9:]*] (.*)');
 
+  @override
   @visibleForTesting
   late final linesController = StreamController<String>.broadcast(
     onListen: _listenToSysLog,
     onCancel: dispose,
   );
 
-  // Sometimes (race condition?) we try to send a log after the controller has
-  // been closed. See https://github.com/flutter/flutter/issues/99021 for more
-  // context.
   @visibleForTesting
   void addToLinesController(String message, IOSDeviceLogSource source) {
-    if (!linesController.isClosed) {
-      if (_excludeLog(message, source)) {
-        return;
-      }
-      linesController.add(message);
+    if (_excludeLog(message, source)) {
+      return;
     }
+    addLogToStream(message);
   }
 
   /// Used to track messages prefixed with "flutter:" from the fallback log source.
   final _fallbackStreamFlutterMessages = <String>[];
 
   /// Used to track if a message prefixed with "flutter:" has been received from the primary log.
-  var primarySourceFlutterLogReceived = false;
+  bool primarySourceFlutterLogReceived = false;
 
   /// There are three potential logging sources: `idevicesyslog`, `ios-deploy`,
   /// and Unified Logging (Dart VM). When using more than one of these logging
@@ -1448,6 +1727,15 @@ class IOSDeviceLogReader extends DeviceLogReader {
   @override
   Stream<String> get logLines => linesController.stream;
 
+  final _coreDeviceLoggingSource = CoreDeviceLoggingSource();
+  Future<void> listenToCoreDeviceLauncher(IOSCoreDeviceLauncher launcher) async {
+    if (!useCoreDeviceLogging) {
+      return;
+    }
+    _coreDeviceLoggingSource.coreDeviceLauncher = launcher;
+    await _coreDeviceLoggingSource.listenToLogs(addToLinesController, linesController);
+  }
+
   FlutterVmService? _connectedVmService;
 
   @override
@@ -1469,6 +1757,15 @@ class IOSDeviceLogReader extends DeviceLogReader {
     // Also, `idevicesyslog` does not work with iOS 17 wireless devices, so use the
     // Dart VM for wireless devices.
     if (_isCoreDevice) {
+      // `idevicesyslog` stopped working with at least Xcode 26 (may have been before).
+      // Instead, use logging from `devicectl` and `lldb`.
+      final Version? xcodeVersion = _xcode?.currentVersion;
+      if (xcodeVersion != null && xcodeVersion.major >= 26) {
+        return _IOSDeviceLogSources(
+          primarySource: IOSDeviceLogSource.devicectlAndLldb,
+          fallbackSource: IOSDeviceLogSource.unifiedLogging,
+        );
+      }
       if (_isWirelesslyConnected) {
         return _IOSDeviceLogSources(primarySource: IOSDeviceLogSource.unifiedLogging);
       }
@@ -1534,6 +1831,13 @@ class IOSDeviceLogReader extends DeviceLogReader {
   bool get useIOSDeployLogging {
     return logSources.primarySource == IOSDeviceLogSource.iosDeploy ||
         logSources.fallbackSource == IOSDeviceLogSource.iosDeploy;
+  }
+
+  /// Whether `devicectl` and `lldb` are used as the primary or fallback source for device logs.
+  @visibleForTesting
+  bool get useCoreDeviceLogging {
+    return logSources.primarySource == IOSDeviceLogSource.devicectlAndLldb ||
+        logSources.fallbackSource == IOSDeviceLogSource.devicectlAndLldb;
   }
 
   /// Listen to Dart VM for logs on iOS 13 or greater.
@@ -1606,14 +1910,8 @@ class IOSDeviceLogReader extends DeviceLogReader {
       return;
     }
     _iMobileDevice.startLogger(_deviceId, _isWirelesslyConnected).then<void>((Process process) {
-      process.stdout
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter())
-          .listen(_newSyslogLineHandler());
-      process.stderr
-          .transform<String>(utf8.decoder)
-          .transform<String>(const LineSplitter())
-          .listen(_newSyslogLineHandler());
+      process.stdout.transform(utf8LineDecoder).listen(_newSyslogLineHandler());
+      process.stderr.transform(utf8LineDecoder).listen(_newSyslogLineHandler());
       process.exitCode.whenComplete(() {
         if (!linesController.hasListener) {
           return;
@@ -1671,6 +1969,7 @@ class IOSDeviceLogReader extends DeviceLogReader {
     }
     idevicesyslogProcess?.kill();
     _iosDeployDebugger?.detach();
+    _coreDeviceLoggingSource.dispose();
   }
 }
 
@@ -1683,6 +1982,9 @@ enum IOSDeviceLogSource {
 
   /// Gets logs from the Dart VM Service.
   unifiedLogging,
+
+  /// Gets logs from `devicectl` and `lldb`
+  devicectlAndLldb,
 }
 
 class _IOSDeviceLogSources {
@@ -1690,6 +1992,62 @@ class _IOSDeviceLogSources {
 
   final IOSDeviceLogSource primarySource;
   final IOSDeviceLogSource? fallbackSource;
+}
+
+@visibleForTesting
+class CoreDeviceLoggingSource {
+  IOSCoreDeviceLauncher? coreDeviceLauncher;
+  final _loggingSubscriptions = <StreamSubscription<void>>[];
+
+  Future<void> listenToLogs(
+    void Function(String, IOSDeviceLogSource) onLogMessage,
+    StreamController<String> linesController,
+  ) async {
+    final IOSCoreDeviceLogForwarder? debugger = coreDeviceLauncher?.coreDeviceLogForwarder;
+    if (debugger != null) {
+      _loggingSubscriptions.add(
+        debugger.logLines.listen(
+          (String line) =>
+              onLogMessage(_debuggerLineHandler(line), IOSDeviceLogSource.devicectlAndLldb),
+          onError: linesController.addError,
+          onDone: linesController.close,
+          cancelOnError: true,
+        ),
+      );
+    }
+
+    final LLDBLogForwarder? lldbLogForwarder = coreDeviceLauncher?.lldbLogForwarder;
+    if (lldbLogForwarder != null) {
+      _loggingSubscriptions.add(
+        lldbLogForwarder.logLines.listen(
+          (String line) =>
+              onLogMessage(_debuggerLineHandler(line), IOSDeviceLogSource.devicectlAndLldb),
+          onError: linesController.addError,
+          onDone: linesController.close,
+          cancelOnError: true,
+        ),
+      );
+    }
+  }
+
+  // Logging from native code/Flutter engine is prefixed by timestamp and process metadata:
+  // 2020-09-15 19:15:10.931434-0700 Runner[541:226276] Did finish launching.
+  // 2020-09-15 19:15:10.931434-0700 Runner[541:226276] [Category] Did finish launching.
+  //
+  // Logging from the dart code has no prefixing metadata.
+  final _debuggerLoggingRegex = RegExp(r'^\S* \S* \S*\[[0-9:]*] (.*)');
+
+  // Strip off the logging metadata (leave the category), or just echo the line.
+  String _debuggerLineHandler(String line) =>
+      _debuggerLoggingRegex.firstMatch(line)?.group(1) ?? line;
+
+  void dispose() {
+    for (final StreamSubscription<void> loggingSubscription in _loggingSubscriptions) {
+      loggingSubscription.cancel();
+    }
+    coreDeviceLauncher?.lldbLogForwarder.exit();
+    coreDeviceLauncher?.coreDeviceLogForwarder.exit();
+  }
 }
 
 /// A [DevicePortForwarder] specialized for iOS usage with iproxy.
@@ -1731,7 +2089,7 @@ class IOSDevicePortForwarder extends DevicePortForwarder {
   final OperatingSystemUtils _operatingSystemUtils;
 
   @override
-  var forwardedPorts = <ForwardedPort>[];
+  List<ForwardedPort> forwardedPorts = <ForwardedPort>[];
 
   @visibleForTesting
   void addForwardedPorts(List<ForwardedPort> ports) {
